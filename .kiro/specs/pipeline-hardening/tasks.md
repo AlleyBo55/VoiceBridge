@@ -6,17 +6,17 @@ Harden the VoiceBridge pipeline by introducing seven new components (PipelineOrc
 
 ## Tasks
 
-- [x] 1. Add new types and message bus extensions
-  - [x] 1.1 Add new types to `src/lib/types.ts`
+- [ ] 1. Add new types and message bus extensions
+  - [ ] 1.1 Add new types to `src/lib/types.ts`
     - Add `AudioRoutingState`, `AudioRoutingEvent`, `DegradationLevel`, `DegradationTransition`, `AudioBridgeMessage`, `CleanupTarget`, and `CleanupResult` types as defined in the design document
     - _Requirements: 8.1, 5.1, 10.5, 7.1_
 
-  - [x] 1.2 Add new message types to `src/lib/message-bus.ts`
+  - [ ] 1.2 Add new message types to `src/lib/message-bus.ts`
     - Add `AUDIO_ROUTING_STATE_CHANGED`, `DEGRADATION_LEVEL_CHANGED`, `UTTERANCE_STATE_CHANGED`, `TRACK_INJECT`, `TRACK_RESTORE`, `TRACK_STATUS`, `AUDIO_BRIDGE_READY`, `AUDIO_BRIDGE_DISCONNECTED`, `DEMO_KEYS_POPULATED`, `EMBEDDED_KEY_EXHAUSTED`, and `CLEANUP_COMPLETE` to `MessageType` union and `MessagePayloadMap`
     - _Requirements: 1.10, 5.7, 10.5, 6.6_
 
-- [x] 2. Implement AudioRoutingStateMachine (`src/lib/audio-routing.ts`)
-  - [x] 2.1 Implement the pure state transition function `transitionRoutingState()`
+- [ ] 2. Implement AudioRoutingStateMachine (`src/lib/audio-routing.ts`)
+  - [ ] 2.1 Implement the pure state transition function `transitionRoutingState()`
     - Implement the state machine with four states: PASSTHROUGH, MUTED, TTS_PLAYING, BARGE_IN
     - Implement `getAudioSource()` mapping each state to its audio source
     - Implement `getEchoCancellationMode()` mapping routing states to echo cancellation modes
@@ -34,8 +34,8 @@ Harden the VoiceBridge pipeline by introducing seven new components (PipelineOrc
     - Test that `getEchoCancellationMode()` returns 'speaking' for MUTED and TTS_PLAYING, 'listening' for PASSTHROUGH and BARGE_IN
     - **Validates: Requirements 8.8**
 
-- [x] 3. Implement DegradationManager (`src/lib/degradation-manager.ts`)
-  - [x] 3.1 Implement `computeDegradationLevel()`, `isValidDegradation()`, and `getNextDegradationLevel()`
+- [ ] 3. Implement DegradationManager (`src/lib/degradation-manager.ts`)
+  - [ ] 3.1 Implement `computeDegradationLevel()`, `isValidDegradation()`, and `getNextDegradationLevel()`
     - `computeDegradationLevel()`: full when all connected, text-only when STT+LLM connected but TTS not, transcription-only when only STT connected, passthrough when STT not connected
     - `isValidDegradation()`: degradation must follow cascade order (full→text-only→transcription-only→passthrough), upgrade can skip levels
     - `getNextDegradationLevel()`: returns the next level down in the cascade, or null for passthrough
@@ -51,8 +51,8 @@ Harden the VoiceBridge pipeline by introducing seven new components (PipelineOrc
     - Test that for any sequence of service failures, degradation only steps down one level at a time
     - **Validates: Requirements 5.10**
 
-- [x] 4. Implement CleanupSequencer (`src/lib/cleanup-sequencer.ts`)
-  - [x] 4.1 Implement `executeCleanupSequence()` and `buildPipelineCleanupTargets()`
+- [ ] 4. Implement CleanupSequencer (`src/lib/cleanup-sequencer.ts`)
+  - [ ] 4.1 Implement `executeCleanupSequence()` and `buildPipelineCleanupTargets()`
     - `executeCleanupSequence()`: iterate through targets in order, try/catch each, collect errors, return CleanupResult with duration
     - `buildPipelineCleanupTargets()`: build ordered list (AudioCapture → STT → Translation → TTS → AudioOutput → EchoCancellation → LatencyMonitor), skip null modules
     - _Requirements: 7.1, 7.2, 7.8, 7.10_
@@ -67,11 +67,11 @@ Harden the VoiceBridge pipeline by introducing seven new components (PipelineOrc
     - Test that `buildPipelineCleanupTargets()` always returns targets in the correct order, skipping null modules
     - **Validates: Requirements 7.1**
 
-- [x] 5. Checkpoint — Ensure all tests pass
+- [ ] 5. Checkpoint — Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [x] 6. Implement DemoBootstrap (`src/lib/demo-bootstrap.ts`)
-  - [x] 6.1 Implement `bootstrapDemoKeys()`, `checkEmbeddedKeyExhaustion()`, and `isDemoMode()`
+- [ ] 6. Implement DemoBootstrap (`src/lib/demo-bootstrap.ts`)
+  - [ ] 6.1 Implement `bootstrapDemoKeys()`, `checkEmbeddedKeyExhaustion()`, and `isDemoMode()`
     - `bootstrapDemoKeys()`: read Vite env vars (`VITE_DEMO_ELEVENLABS_KEY`, `VITE_DEMO_LLM_KEY`, `VITE_DEMO_LLM_PROVIDER`, `VITE_DEMO_OPENROUTER_MODEL`), check if user keys exist in chrome.storage, write embedded keys using Settings_Store encryption if no user keys
     - `checkEmbeddedKeyExhaustion()`: check `embeddedKeyExhausted` flag in chrome.storage.local, cache result for 6 hours
     - `isDemoMode()`: return true if demo keys are active and no user-provided keys exist
@@ -84,8 +84,8 @@ Harden the VoiceBridge pipeline by introducing seven new components (PipelineOrc
     - Test `isDemoMode()` returns correct state
     - _Requirements: 6.1, 6.2, 6.6, 6.7_
 
-- [x] 7. Implement AudioBridge (`src/lib/audio-bridge.ts`)
-  - [x] 7.1 Implement `AudioBridgeSender` class (offscreen side)
+- [ ] 7. Implement AudioBridge (`src/lib/audio-bridge.ts`)
+  - [ ] 7.1 Implement `AudioBridgeSender` class (offscreen side)
     - `attachPort()`: attach MessagePort from service worker
     - `sendAudioChunk()`: send PCM as Transferable ArrayBuffer (zero-copy)
     - `sendTrackCommand()`: send inject/restore/status commands, return Promise for acknowledgment
@@ -93,7 +93,7 @@ Harden the VoiceBridge pipeline by introducing seven new components (PipelineOrc
     - `isConnected()` and `close()` methods
     - _Requirements: 10.1, 10.2, 10.5, 10.6, 10.7_
 
-  - [x] 7.2 Implement `AudioBridgeReceiver` class (content script side)
+  - [ ] 7.2 Implement `AudioBridgeReceiver` class (content script side)
     - `attachPort()`: attach MessagePort from service worker
     - Set up message handler dispatching to `onAudioChunk`, `onTrackCommand`, `onStateSync` callbacks
     - `sendTrackResponse()`: send acknowledgment back to offscreen
@@ -106,31 +106,31 @@ Harden the VoiceBridge pipeline by introducing seven new components (PipelineOrc
     - Test port disconnection detection
     - _Requirements: 10.2, 10.6, 10.4_
 
-- [x] 8. Implement PlatformAdapter interface and concrete adapters (`src/lib/platform-adapters.ts`)
-  - [x] 8.1 Implement PlatformAdapter interface and `createPlatformAdapter()` factory
+- [ ] 8. Implement PlatformAdapter interface and concrete adapters (`src/lib/platform-adapters.ts`)
+  - [ ] 8.1 Implement PlatformAdapter interface and `createPlatformAdapter()` factory
     - Define the interface with `initialize()`, `injectVirtualTrack()`, `restoreOriginalTrack()`, `isInjected()`, `destroy()`
     - Implement factory function mapping MeetingPlatform to adapter instances, returning null for 'none'
     - _Requirements: 3.1, 3.7_
 
-  - [x] 8.2 Implement GoogleMeetAdapter
+  - [ ] 8.2 Implement GoogleMeetAdapter
     - Inject main-world script at document_start that intercepts `navigator.mediaDevices.getUserMedia`
     - Store original audio track reference, replace on session start via `RTCRtpSender.replaceTrack()`
     - Use `window.postMessage` with `voicebridge` source marker for communication
     - _Requirements: 3.2, 3.10_
 
-  - [x] 8.3 Implement TeamsAdapter and DiscordAdapter
+  - [ ] 8.3 Implement TeamsAdapter and DiscordAdapter
     - Inject main-world script monitoring `RTCPeerConnection` constructor
     - Capture peer connections, use `replaceTrack()` on audio sender
     - Use `window.postMessage` with `voicebridge` source marker for communication
     - _Requirements: 3.3, 3.4, 3.10_
 
-  - [x] 8.4 Implement ZoomAdapter
+  - [ ] 8.4 Implement ZoomAdapter
     - Use `chrome.tabCapture.capture()` to obtain tab audio stream
     - Create AudioContext mixing node combining TTS audio with tab output
     - Route mixed audio back to the tab
     - _Requirements: 3.5_
 
-  - [x] 8.5 Implement GenericAdapter
+  - [ ] 8.5 Implement GenericAdapter
     - Monitor `RTCPeerConnection` constructor in main world
     - Attempt `replaceTrack()` on any detected audio sender
     - _Requirements: 3.6_
@@ -140,50 +140,50 @@ Harden the VoiceBridge pipeline by introducing seven new components (PipelineOrc
     - Test that for any MeetingPlatform value, `createPlatformAdapter()` returns the correct adapter type or null for 'none'
     - **Validates: Requirements 3.7**
 
-- [x] 9. Extend AudioOutputModule with `getMixedTrack()` method
+- [ ] 9. Extend AudioOutputModule with `getMixedTrack()` method
   - Add `getMixedTrack()` to existing `AudioOutputModule` in `src/lib/audio-output.ts`
   - Return a MediaStreamTrack from a mixing node that dynamically switches between silence and TTS audio based on routing state
   - Ensure zero gaps in the audio stream sent to the meeting
   - _Requirements: 2.9, 2.3, 2.4_
 
-- [x] 10. Checkpoint — Ensure all tests pass
+- [ ] 10. Checkpoint — Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [x] 11. Implement PipelineOrchestrator (`src/lib/pipeline-orchestrator.ts`)
-  - [x] 11.1 Implement utterance lifecycle tracking and sequence ID management
+- [ ] 11. Implement PipelineOrchestrator (`src/lib/pipeline-orchestrator.ts`)
+  - [ ] 11.1 Implement utterance lifecycle tracking and sequence ID management
     - Create `PipelineOrchestrator` class with `#utterances` Map, `#currentSequenceId` counter, `#playbackHead`
     - Implement `handleSpeechEnd()` to assign monotonically increasing sequence IDs and create PipelineUtterance records with state CAPTURED
     - Implement state transitions: CAPTURED→TRANSCRIBED→TRANSLATED→SYNTHESIZED→PLAYED, or to DROPPED from any state
     - Reset sequence counter and clear state on new session
     - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.12_
 
-  - [x] 11.2 Implement strict playback ordering and backpressure management
+  - [ ] 11.2 Implement strict playback ordering and backpressure management
     - Implement `#canPlay()`: utterance N+1 cannot play until N is PLAYED or DROPPED
     - Implement `#advancePlayback()`: try to advance the playback head after each state transition
     - Implement `#enforceBackpressure()`: drop oldest unprocessed utterances when queue > 3
     - Implement bounded active utterance map (max 10 entries), evict completed utterances older than 30 seconds
     - _Requirements: 1.7, 1.8, 1.11_
 
-  - [x] 11.3 Implement failure isolation and per-stage timeouts
+  - [ ] 11.3 Implement failure isolation and per-stage timeouts
     - Implement `#setStageTimeout()` for STT (5s), Translation (3s), TTS (3s)
     - On timeout or failure, transition utterance to DROPPED with reason, continue processing subsequent utterances
     - Implement `#dropUtterance()` with reason logging
     - _Requirements: 1.9, 9.2, 9.3_
 
-  - [x] 11.4 Implement latency enforcement and consecutive high-latency alerting
+  - [ ] 11.4 Implement latency enforcement and consecutive high-latency alerting
     - Measure end-to-end latency per utterance using LatencyMonitor
     - Track consecutive high-latency utterances (>3000ms), send ERROR after 5 consecutive
     - Implement translation flush on backpressure (queue ≥ 2 pending utterances)
     - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5, 9.6_
 
-  - [x] 11.5 Integrate AudioRoutingStateMachine into PipelineOrchestrator
+  - [ ] 11.5 Integrate AudioRoutingStateMachine into PipelineOrchestrator
     - Use `transitionRoutingState()` for routing state transitions on session start/stop, TTS start/end, barge-in, degradation
     - Emit `AUDIO_ROUTING_STATE_CHANGED` messages on state changes
     - Coordinate with EchoCancellationModule based on routing state
     - Ensure state transitions complete within 50ms
     - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 8.8_
 
-  - [x] 11.6 Integrate DegradationManager into PipelineOrchestrator
+  - [ ] 11.6 Integrate DegradationManager into PipelineOrchestrator
     - Implement `handleServiceStateChange()` to update service health and compute degradation level
     - Implement `#evaluateDegradation()` and `#attemptUpgrade()` for cascade transitions
     - Restore original mic track when degrading below `full`
@@ -192,14 +192,14 @@ Harden the VoiceBridge pipeline by introducing seven new components (PipelineOrc
     - Emit `DEGRADATION_LEVEL_CHANGED` messages
     - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.8, 5.9, 5.10_
 
-  - [x] 11.7 Integrate CleanupSequencer into PipelineOrchestrator
+  - [ ] 11.7 Integrate CleanupSequencer into PipelineOrchestrator
     - Implement `stopSession()` using `buildPipelineCleanupTargets()` and `executeCleanupSequence()`
     - Set all module references to null after cleanup
     - Complete cleanup within 1 second
     - Emit `CLEANUP_COMPLETE` message with any errors
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 7.8, 7.10_
 
-  - [x] 11.8 Implement network resilience — reconnection and second-chance logic
+  - [ ] 11.8 Implement network resilience — reconnection and second-chance logic
     - Detect WebSocket disconnection within 2 seconds via heartbeat timeout
     - Implement exponential backoff reconnection (500ms base, 2x multiplier, 10s max, 5 attempts)
     - Implement second-chance reconnection after 30 seconds if first cycle fails
@@ -207,7 +207,7 @@ Harden the VoiceBridge pipeline by introducing seven new components (PipelineOrc
     - Send CONNECTION_STATE_CHANGED messages for connecting/connected/error states
     - _Requirements: 4.3, 4.4, 4.7, 4.8, 4.9, 4.10_
 
-  - [x] 11.9 Emit SESSION_STATE_CHANGED messages with utterance counts
+  - [ ] 11.9 Emit SESSION_STATE_CHANGED messages with utterance counts
     - Send updated totalUtterances, droppedUtterances, and currentSequenceId after each state transition
     - _Requirements: 1.10_
 
@@ -241,10 +241,10 @@ Harden the VoiceBridge pipeline by introducing seven new components (PipelineOrc
     - Test that the active utterance map never exceeds 10 entries
     - **Validates: Requirements 1.11**
 
-- [x] 12. Checkpoint — Ensure all tests pass
+- [ ] 12. Checkpoint — Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [x] 13. Rewrite offscreen document (`src/offscreen/offscreen.ts`)
+- [ ] 13. Rewrite offscreen document (`src/offscreen/offscreen.ts`)
   - Replace ad-hoc wiring with PipelineOrchestrator instantiation and delegation
   - Wire SESSION_START to `orchestrator.startSession()`, SESSION_STOP to `orchestrator.stopSession()`
   - Initialize AudioBridgeSender and attach MessagePort from service worker
@@ -253,61 +253,61 @@ Harden the VoiceBridge pipeline by introducing seven new components (PipelineOrc
   - Preserve existing voice time tracking and demo limit logic
   - _Requirements: 1.1–1.12, 7.11, 10.1, 10.2_
 
-- [x] 14. Rewrite content script (`src/content/content-script.ts`)
-  - [x] 14.1 Add PlatformAdapter lifecycle management
+- [ ] 14. Rewrite content script (`src/content/content-script.ts`)
+  - [ ] 14.1 Add PlatformAdapter lifecycle management
     - On MEETING_DETECTED, instantiate the corresponding PlatformAdapter via `createPlatformAdapter()` and call `initialize()`
     - Handle initialization failure: send ERROR with domain "meeting" and code "injection-failed", display `[INJECTION FAILED]` in widget
     - On session end, call `restoreOriginalTrack()` and `destroy()` on the active adapter
     - _Requirements: 3.7, 3.8, 3.9_
 
-  - [x] 14.2 Add AudioBridgeReceiver for MessageChannel audio
+  - [ ] 14.2 Add AudioBridgeReceiver for MessageChannel audio
     - Attach MessagePort from service worker
     - Route received audio chunks to PlatformAdapter for injection
     - Handle track commands (inject/restore/status) and send acknowledgment responses
     - Handle state-sync messages for routing and echo state
     - _Requirements: 10.3, 10.5, 10.6_
 
-  - [x] 14.3 Add RTCPeerConnection monitoring for renegotiation detection
+  - [ ] 14.3 Add RTCPeerConnection monitoring for renegotiation detection
     - Monitor `track` events and `connectionstatechange` events on the RTCPeerConnection
     - Re-apply virtual track replacement within 500ms when renegotiation or new peer connection detected
     - _Requirements: 2.6, 2.7_
 
-  - [x] 14.4 Add `beforeunload` handler and widget degradation status
+  - [ ] 14.4 Add `beforeunload` handler and widget degradation status
     - On `beforeunload`, send SESSION_STOP with reason "tab-closed" to trigger cleanup
     - Call `restoreOriginalTrack()` on the active PlatformAdapter before tab unloads
     - Update floating widget with degradation level status text: `[TEXT ONLY]`, `[TRANSCRIPT ONLY]`, `[PASSTHROUGH]`
     - Update widget status icon based on routing state (microphone, muted, speaker, microphone-pulse)
     - _Requirements: 7.7, 7.9, 5.7, 8.7_
 
-- [x] 15. Update service worker (`src/background/service-worker.ts`)
-  - [x] 15.1 Add MessageChannel broker
+- [ ] 15. Update service worker (`src/background/service-worker.ts`)
+  - [ ] 15.1 Add MessageChannel broker
     - Create MessageChannel port pairs on session start
     - Send one port to offscreen document, one to content script
     - Detect port disconnection and re-establish within 1 second
     - Close both ports on session end
     - _Requirements: 10.1, 10.4, 10.7_
 
-  - [x] 15.2 Add DemoBootstrap on install
+  - [ ] 15.2 Add DemoBootstrap on install
     - Call `bootstrapDemoKeys()` in `runtime.onInstalled` handler
     - Send `DEMO_KEYS_POPULATED` message if demo keys were populated
     - _Requirements: 6.1, 6.2_
 
-- [x] 16. Checkpoint — Ensure all tests pass
+- [ ] 16. Checkpoint — Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [x] 17. Wire onboarding and settings for demo mode
-  - [x] 17.1 Update onboarding wizard to skip API Keys step when demo keys are active
+- [ ] 17. Wire onboarding and settings for demo mode
+  - [ ] 17.1 Update onboarding wizard to skip API Keys step when demo keys are active
     - Check `isDemoMode()` on onboarding load
     - Skip Step 2 (API Keys) and proceed from Welcome (Step 1) to Voice Recording (Step 3)
     - Display demo mode notice during Welcome step: "Demo mode active — 5 minutes of voice translation included. Enter your own API key in Settings for unlimited usage."
     - _Requirements: 6.3, 6.4_
 
-  - [x] 17.2 Update settings page for demo key override and exhaustion handling
+  - [ ] 17.2 Update settings page for demo key override and exhaustion handling
     - When user enters their own API key, overwrite demo key and switch to unlimited mode
     - Handle embedded key exhaustion (HTTP 402): set `embeddedKeyExhausted: true`, disable demo mode, prompt for personal API key
     - _Requirements: 6.5, 6.6_
 
-- [x] 18. Final checkpoint — Ensure all tests pass
+- [ ] 18. Final checkpoint — Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes
