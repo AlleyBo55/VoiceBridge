@@ -223,7 +223,7 @@ Load `dist/` as an unpacked extension in `chrome://extensions/` (Developer mode)
 
 ## License
 
-MIT
+MIT — use it, fork it, ship it.
 
 ---
 
