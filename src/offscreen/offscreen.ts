@@ -29,6 +29,10 @@ let voiceTimeAccumulator = 0;
 let voiceTimeStart = 0;
 let isSpeaking = false;
 
+// Demo limit config from build env
+const DEMO_UNLIMITED = import.meta.env.VITE_DEMO_UNLIMITED === 'true';
+const DEMO_VOICE_LIMIT_MS = Number(import.meta.env.VITE_DEMO_VOICE_LIMIT_SECONDS ?? '300') * 1000;
+
 // ── Initialize ──────────────────────────────────────────────
 
 async function init(): Promise<void> {
@@ -183,10 +187,10 @@ async function handleSessionStart(payload: { sourceLanguage: string; targetLangu
       voiceTimeAccumulator += Date.now() - voiceTimeStart;
       sendMessage('DEMO_TIME_UPDATE', {
         voiceTimeUsedMs: voiceTimeAccumulator,
-        voiceTimeRemainingMs: Math.max(0, 120000 - voiceTimeAccumulator),
+        voiceTimeRemainingMs: DEMO_UNLIMITED ? Infinity : Math.max(0, DEMO_VOICE_LIMIT_MS - voiceTimeAccumulator),
       });
 
-      if (voiceTimeAccumulator >= 120000) {
+      if (!DEMO_UNLIMITED && voiceTimeAccumulator >= DEMO_VOICE_LIMIT_MS) {
         sendMessage('DEMO_LIMIT_REACHED', { resetsAt: Date.now() + 86400000 });
         handleSessionStop({ reason: 'demo-limit' });
       }

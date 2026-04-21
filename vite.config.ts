@@ -1,5 +1,54 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'path';
+import { copyFileSync, mkdirSync, readdirSync } from 'fs';
+
+/**
+ * Vite plugin to copy static extension assets (manifest, HTML, CSS, icons)
+ * to the dist folder after build.
+ */
+function copyExtensionAssets() {
+  return {
+    name: 'copy-extension-assets',
+    closeBundle() {
+      const dist = resolve(__dirname, 'dist');
+      mkdirSync(dist, { recursive: true });
+
+      // manifest.json
+      copyFileSync(resolve(__dirname, 'src/manifest.json'), resolve(dist, 'manifest.json'));
+
+      // HTML pages
+      const htmlPages = [
+        { src: 'src/popup/popup.html', dest: 'popup/popup.html' },
+        { src: 'src/sidepanel/sidepanel.html', dest: 'sidepanel/sidepanel.html' },
+        { src: 'src/options/options.html', dest: 'options/options.html' },
+        { src: 'src/onboarding/onboarding.html', dest: 'onboarding/onboarding.html' },
+        { src: 'src/offscreen/offscreen.html', dest: 'offscreen/offscreen.html' },
+      ];
+      for (const { src, dest } of htmlPages) {
+        const destPath = resolve(dist, dest);
+        mkdirSync(resolve(destPath, '..'), { recursive: true });
+        copyFileSync(resolve(__dirname, src), destPath);
+      }
+
+      // CSS
+      mkdirSync(resolve(dist, 'styles'), { recursive: true });
+      for (const file of readdirSync(resolve(__dirname, 'src/styles'))) {
+        copyFileSync(resolve(__dirname, 'src/styles', file), resolve(dist, 'styles', file));
+      }
+      // Also copy widget.css to assets/ for content script
+      mkdirSync(resolve(dist, 'assets'), { recursive: true });
+      copyFileSync(resolve(__dirname, 'src/styles/widget.css'), resolve(dist, 'assets/widget.css'));
+
+      // Icons
+      mkdirSync(resolve(dist, 'icons'), { recursive: true });
+      for (const file of readdirSync(resolve(__dirname, 'src/icons'))) {
+        if (file.endsWith('.png') || file.endsWith('.svg')) {
+          copyFileSync(resolve(__dirname, 'src/icons', file), resolve(dist, 'icons', file));
+        }
+      }
+    },
+  };
+}
 
 export default defineConfig({
   build: {
@@ -24,9 +73,10 @@ export default defineConfig({
       },
     },
     target: 'esnext',
-    minify: 'terser',
+    minify: 'esbuild',
     sourcemap: true,
   },
+  plugins: [copyExtensionAssets()],
   resolve: {
     alias: {
       '@lib': resolve(__dirname, 'src/lib'),
@@ -34,8 +84,13 @@ export default defineConfig({
     },
   },
   define: {
-    'import.meta.env.VITE_DEMO_API_KEY': JSON.stringify(process.env.VITE_DEMO_API_KEY ?? ''),
-    'import.meta.env.VITE_DEMO_KEY_ENABLED': JSON.stringify(process.env.VITE_DEMO_KEY_ENABLED ?? 'true'),
+    'import.meta.env.VITE_DEMO_KEY_ENABLED': JSON.stringify(process.env.VITE_DEMO_KEY_ENABLED ?? 'false'),
+    'import.meta.env.VITE_DEMO_ELEVENLABS_KEY': JSON.stringify(process.env.VITE_DEMO_ELEVENLABS_KEY ?? ''),
+    'import.meta.env.VITE_DEMO_LLM_PROVIDER': JSON.stringify(process.env.VITE_DEMO_LLM_PROVIDER ?? 'openrouter'),
+    'import.meta.env.VITE_DEMO_LLM_KEY': JSON.stringify(process.env.VITE_DEMO_LLM_KEY ?? ''),
+    'import.meta.env.VITE_DEMO_OPENROUTER_MODEL': JSON.stringify(process.env.VITE_DEMO_OPENROUTER_MODEL ?? 'openai/gpt-4o'),
+    'import.meta.env.VITE_DEMO_UNLIMITED': JSON.stringify(process.env.VITE_DEMO_UNLIMITED ?? 'false'),
+    'import.meta.env.VITE_DEMO_VOICE_LIMIT_SECONDS': JSON.stringify(process.env.VITE_DEMO_VOICE_LIMIT_SECONDS ?? '300'),
     'import.meta.env.VITE_VERSION': JSON.stringify(process.env.VITE_VERSION ?? '1.0.0'),
   },
 });
