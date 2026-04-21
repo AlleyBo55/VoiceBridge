@@ -6,6 +6,7 @@
 import type {
   SessionState, ServiceConnectionState, EchoState, VADState,
   LatencyMeasurement, MeetingPlatform, VoiceProfileState, DebugLogEntry,
+  AudioRoutingState, DegradationLevel, PipelineStage, LLMProvider,
 } from './types.js';
 
 // ── Message Types ───────────────────────────────────────────
@@ -26,7 +27,11 @@ export type MessageType =
   | 'VOICE_PROFILE_STATUS' | 'VOICE_PROFILE_PREVIEW'
   | 'ROULETTE_START' | 'ROULETTE_LANGUAGE_CHANGE' | 'ROULETTE_COMPLETE'
   | 'GHOST_MODE_TOGGLE' | 'GHOST_SENSITIVITY_UPDATE'
-  | 'ERROR' | 'DEBUG_LOG';
+  | 'ERROR' | 'DEBUG_LOG'
+  | 'AUDIO_ROUTING_STATE_CHANGED' | 'DEGRADATION_LEVEL_CHANGED' | 'UTTERANCE_STATE_CHANGED'
+  | 'TRACK_INJECT' | 'TRACK_RESTORE' | 'TRACK_STATUS'
+  | 'AUDIO_BRIDGE_READY' | 'AUDIO_BRIDGE_DISCONNECTED'
+  | 'DEMO_KEYS_POPULATED' | 'EMBEDDED_KEY_EXHAUSTED' | 'CLEANUP_COMPLETE';
 
 export type ExtensionContext = 'service-worker' | 'offscreen' | 'content-script' | 'popup' | 'sidepanel';
 
@@ -84,6 +89,18 @@ export interface MessagePayloadMap {
 
   ERROR: { code: string; message: string; userMessage: string; action?: string };
   DEBUG_LOG: DebugLogEntry;
+
+  AUDIO_ROUTING_STATE_CHANGED: { state: AudioRoutingState };
+  DEGRADATION_LEVEL_CHANGED: { level: DegradationLevel; previous: DegradationLevel; trigger: string };
+  UTTERANCE_STATE_CHANGED: { sequenceId: number; state: PipelineStage; reason?: string };
+  TRACK_INJECT: { tabId: number };
+  TRACK_RESTORE: { tabId: number };
+  TRACK_STATUS: { injected: boolean; platform: MeetingPlatform };
+  AUDIO_BRIDGE_READY: { tabId: number };
+  AUDIO_BRIDGE_DISCONNECTED: { tabId: number };
+  DEMO_KEYS_POPULATED: { provider: LLMProvider };
+  EMBEDDED_KEY_EXHAUSTED: undefined;
+  CLEANUP_COMPLETE: { errors: Array<{ name: string; message: string }> };
 }
 
 export interface ExtensionMessage<T extends MessageType = MessageType> {

@@ -123,6 +123,15 @@ export class AudioOutputModule {
   }
 
   /**
+   * Get a MediaStreamTrack that dynamically switches between
+   * silence and TTS audio based on the routing state.
+   * This is the track injected into the meeting's RTCPeerConnection.
+   */
+  getMixedTrack(): MediaStreamTrack | null {
+    return this.#destination?.stream.getAudioTracks()[0] ?? null;
+  }
+
+  /**
    * Set volume normalization based on reference mic level.
    */
   normalizeVolume(referenceLevel: number): void {

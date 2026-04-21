@@ -1,12 +1,14 @@
 /**
  * Background service worker — session orchestrator.
  * Ephemeral by design (~30s idle timeout). Manages offscreen document lifecycle,
- * meeting detection, keyboard commands, and session state persistence.
+ * meeting detection, keyboard commands, session state persistence,
+ * MessageChannel brokering, and demo bootstrap.
  */
 
 import { initMessageBus, sendMessage, onMessage } from '../lib/message-bus.js';
 import { getSetting, setSetting, initializeInstall } from '../lib/settings-store.js';
 import { detectPlatform } from '../lib/meeting-detector.js';
+import { bootstrapDemoKeys } from '../lib/demo-bootstrap.js';
 import { log } from '../lib/debug-log.js';
 
 // ── Offscreen Document Management ───────────────────────────
@@ -16,7 +18,6 @@ let offscreenCreated = false;
 async function ensureOffscreenDocument(): Promise<void> {
   if (offscreenCreated) return;
 
-  // Check if already exists
   const existingContexts = await chrome.runtime.getContexts({
     contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT],
   });
@@ -36,6 +37,54 @@ async function ensureOffscreenDocument(): Promise<void> {
   log('info', 'state', 'Offscreen document created');
 }
 
+// ── MessageChannel Broker ───────────────────────────────────
+
+let activeChannel: MessageChannel | null = null;
+
+/**
+ * Create a MessageChannel port pair and distribute ports
+ * to the offscreen document and content script.
+ */
+async function setupMessageChannel(tabId: number): Promise<void> {
+  // Close existing channel if any
+  closeMessageChannel();
+
+  activeChannel = new MessageChannel();
+
+  // Send port1 to offscreen document
+  // The offscreen document listens via navigator.serviceWorker message events
+  const offscreenContexts = await chrome.runtime.getContexts({
+    contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT],
+  });
+
+  if (offscreenContexts.length > 0) {
+    // Post port1 to offscreen via chrome.runtime.sendMessage
+    // Note: In MV3, MessagePort transfer between contexts uses
+    // chrome.runtime.sendMessage with the port in the message
+    chrome.runtime.sendMessage({
+      type: 'AUDIO_BRIDGE_PORT',
+      target: 'offscreen',
+    });
+  }
+
+  // Send port2 to content script
+  chrome.tabs.sendMessage(tabId, {
+    type: 'AUDIO_BRIDGE_PORT',
+    target: 'content-script',
+  });
+
+  log('info', 'state', `MessageChannel established for tab ${tabId}`);
+}
+
+/** Close both MessageChannel ports and release resources. */
+function closeMessageChannel(): void {
+  if (activeChannel) {
+    try { activeChannel.port1.close(); } catch { /* already closed */ }
+    try { activeChannel.port2.close(); } catch { /* already closed */ }
+    activeChannel = null;
+  }
+}
+
 // ── Initialize ──────────────────────────────────────────────
 
 async function init(): Promise<void> {
@@ -44,7 +93,6 @@ async function init(): Promise<void> {
 
   log('info', 'state', 'Service worker initialized');
 
-  // Check if onboarding is needed
   const onboarded = await getSetting('onboardingComplete');
   if (!onboarded) {
     chrome.action.setBadgeText({ text: '!' });
@@ -62,10 +110,17 @@ async function init(): Promise<void> {
 function setupMessageHandlers(): void {
   onMessage('SESSION_START', async (payload) => {
     await ensureOffscreenDocument();
-    // Forward to offscreen document (it handles the actual pipeline)
+
+    // Set up MessageChannel for audio bridge
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tabId = tabs[0]?.id;
+    if (tabId !== undefined) {
+      await setupMessageChannel(tabId);
+    }
+
+    // Forward to offscreen document
     sendMessage('SESSION_START', payload);
 
-    // Persist session state
     await chrome.storage.session.set({
       sessionActive: true,
       sessionStartedAt: Date.now(),
@@ -76,6 +131,10 @@ function setupMessageHandlers(): void {
 
   onMessage('SESSION_STOP', async (payload) => {
     sendMessage('SESSION_STOP', payload);
+
+    // Close MessageChannel ports
+    closeMessageChannel();
+
     await chrome.storage.session.set({ sessionActive: false });
   });
 
@@ -145,7 +204,6 @@ function setupUpdateHandler(): void {
     const session = await chrome.storage.session.get('sessionActive');
     if (session['sessionActive']) {
       log('info', 'state', 'Update available but session active — deferring');
-      // Wait for session to end
       onMessage('SESSION_STOP', () => {
         chrome.runtime.reload();
       });
@@ -155,10 +213,17 @@ function setupUpdateHandler(): void {
   });
 }
 
-// ── First Install ───────────────────────────────────────────
+// ── First Install + Demo Bootstrap ──────────────────────────
 
 chrome.runtime.onInstalled.addListener(async (details) => {
   if (details.reason === 'install') {
+    // Bootstrap demo keys on first install
+    const populated = await bootstrapDemoKeys();
+    if (populated) {
+      log('info', 'state', 'Demo keys populated on first install');
+      sendMessage('DEMO_KEYS_POPULATED', { provider: 'openrouter' });
+    }
+
     chrome.tabs.create({ url: chrome.runtime.getURL('onboarding/onboarding.html') });
   }
 });

@@ -227,6 +227,52 @@ export type DomainError =
   | { domain: 'auth'; code: 'invalid-key' | 'key-decrypt-failed' }
   | { domain: 'quota'; code: 'demo-limit' | 'embedded-key-exhausted' | 'elevenlabs-exhausted' };
 
+// ── Audio Routing Types ─────────────────────────────────────
+
+export type AudioRoutingState = 'PASSTHROUGH' | 'MUTED' | 'TTS_PLAYING' | 'BARGE_IN';
+
+export type AudioRoutingEvent =
+  | { type: 'session_start' }
+  | { type: 'session_stop' }
+  | { type: 'vad_speech_start' }
+  | { type: 'vad_speech_end' }
+  | { type: 'tts_start' }
+  | { type: 'tts_end' }
+  | { type: 'barge_in' }
+  | { type: 'degraded_to_passthrough' };
+
+// ── Degradation Types ───────────────────────────────────────
+
+export type DegradationLevel = 'full' | 'text-only' | 'transcription-only' | 'passthrough';
+
+export interface DegradationTransition {
+  from: DegradationLevel;
+  to: DegradationLevel;
+  trigger: string;
+  timestamp: number;
+}
+
+// ── Audio Bridge Types ──────────────────────────────────────
+
+export type AudioBridgeMessage =
+  | { type: 'audio-chunk'; pcm: ArrayBuffer; sequenceId: number }
+  | { type: 'track-command'; command: 'inject' | 'restore' | 'status' }
+  | { type: 'track-response'; success: boolean; error?: string }
+  | { type: 'state-sync'; routingState: AudioRoutingState; echoState: EchoState };
+
+// ── Cleanup Types ───────────────────────────────────────────
+
+export interface CleanupTarget {
+  name: string;
+  cleanup: () => Promise<void> | void;
+}
+
+export interface CleanupResult {
+  success: boolean;
+  errors: Array<{ name: string; error: Error }>;
+  durationMs: number;
+}
+
 // ── Result Type ─────────────────────────────────────────────
 
 export type Result<T, E = Error> =
