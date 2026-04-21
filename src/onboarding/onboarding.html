@@ -77,20 +77,44 @@
   <!-- Step 3: Voice Recording -->
   <div class="step" id="step2">
     <h2>Your Voice</h2>
-    <p class="description">Record 30 seconds of your voice. Read the text below naturally.</p>
+    <p class="description">Record 30 seconds of your voice to clone it. Read the text below naturally.</p>
+    <p class="description" style="font-size:var(--body-sm);color:var(--text-secondary)">Requires ElevenLabs Creator plan or higher. On free tier? Skip this step to use a default voice.</p>
     <div class="card" style="font-size:var(--body-sm);color:var(--text-primary);line-height:1.6">
       "The quick brown fox jumps over the lazy dog. Technology has transformed the way we communicate across borders and languages. In today's interconnected world, the ability to speak and understand multiple languages opens doors to new opportunities and deeper connections with people from diverse backgrounds."
     </div>
     <div class="timer" id="recordTimer">0:30</div>
-    <div class="recording-meter" id="recordMeter">
-      <div class="meter-seg"></div><div class="meter-seg"></div><div class="meter-seg"></div>
-      <div class="meter-seg"></div><div class="meter-seg"></div><div class="meter-seg"></div>
-      <div class="meter-seg"></div><div class="meter-seg"></div><div class="meter-seg"></div>
-      <div class="meter-seg"></div>
+
+    <!-- Equalizer visualizer -->
+    <div id="equalizer" style="display:flex;align-items:flex-end;justify-content:center;gap:3px;height:48px;margin:var(--space-md) 0;">
+      <div class="eq-bar" style="width:4px;background:var(--border);border-radius:2px;transition:height 60ms linear;height:4px;"></div>
+      <div class="eq-bar" style="width:4px;background:var(--border);border-radius:2px;transition:height 60ms linear;height:4px;"></div>
+      <div class="eq-bar" style="width:4px;background:var(--border);border-radius:2px;transition:height 60ms linear;height:4px;"></div>
+      <div class="eq-bar" style="width:4px;background:var(--border);border-radius:2px;transition:height 60ms linear;height:4px;"></div>
+      <div class="eq-bar" style="width:4px;background:var(--border);border-radius:2px;transition:height 60ms linear;height:4px;"></div>
+      <div class="eq-bar" style="width:4px;background:var(--border);border-radius:2px;transition:height 60ms linear;height:4px;"></div>
+      <div class="eq-bar" style="width:4px;background:var(--border);border-radius:2px;transition:height 60ms linear;height:4px;"></div>
+      <div class="eq-bar" style="width:4px;background:var(--border);border-radius:2px;transition:height 60ms linear;height:4px;"></div>
+      <div class="eq-bar" style="width:4px;background:var(--border);border-radius:2px;transition:height 60ms linear;height:4px;"></div>
+      <div class="eq-bar" style="width:4px;background:var(--border);border-radius:2px;transition:height 60ms linear;height:4px;"></div>
+      <div class="eq-bar" style="width:4px;background:var(--border);border-radius:2px;transition:height 60ms linear;height:4px;"></div>
+      <div class="eq-bar" style="width:4px;background:var(--border);border-radius:2px;transition:height 60ms linear;height:4px;"></div>
+      <div class="eq-bar" style="width:4px;background:var(--border);border-radius:2px;transition:height 60ms linear;height:4px;"></div>
+      <div class="eq-bar" style="width:4px;background:var(--border);border-radius:2px;transition:height 60ms linear;height:4px;"></div>
+      <div class="eq-bar" style="width:4px;background:var(--border);border-radius:2px;transition:height 60ms linear;height:4px;"></div>
+      <div class="eq-bar" style="width:4px;background:var(--border);border-radius:2px;transition:height 60ms linear;height:4px;"></div>
+      <div class="eq-bar" style="width:4px;background:var(--border);border-radius:2px;transition:height 60ms linear;height:4px;"></div>
+      <div class="eq-bar" style="width:4px;background:var(--border);border-radius:2px;transition:height 60ms linear;height:4px;"></div>
+      <div class="eq-bar" style="width:4px;background:var(--border);border-radius:2px;transition:height 60ms linear;height:4px;"></div>
+      <div class="eq-bar" style="width:4px;background:var(--border);border-radius:2px;transition:height 60ms linear;height:4px;"></div>
     </div>
+
+    <span class="status-inline" id="recordStatus"></span>
     <div class="nav">
       <button class="btn btn-ghost" id="backBtn2">Back</button>
-      <button class="btn btn-primary" id="recordBtn">Start Recording</button>
+      <div style="display:flex;gap:var(--space-sm)">
+        <button class="btn btn-ghost" id="skipVoiceBtn">Skip</button>
+        <button class="btn btn-primary" id="recordBtn">Start Recording</button>
+      </div>
     </div>
   </div>
 

@@ -157,9 +157,13 @@ export function sendMessage<T extends MessageType>(
   };
 
   if (tabId !== undefined) {
-    chrome.tabs.sendMessage(tabId, message);
+    chrome.tabs.sendMessage(tabId, message).catch(() => {
+      // Receiver not ready yet — safe to ignore
+    });
   } else {
-    chrome.runtime.sendMessage(message);
+    chrome.runtime.sendMessage(message).catch(() => {
+      // Receiver not ready yet — safe to ignore
+    });
   }
 }
 
