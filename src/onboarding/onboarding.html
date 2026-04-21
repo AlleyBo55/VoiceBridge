@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VoiceBridge — Setup</title>
+  <link rel="stylesheet" href="../styles/shared.css">
+  <style>
+    body { max-width: 560px; margin: 0 auto; padding: var(--space-3xl) var(--space-md); min-height: 100vh; display: flex; flex-direction: column; }
+    .step { display: none; flex-direction: column; gap: var(--space-lg); flex: 1; }
+    .step.active { display: flex; }
+    .step-indicator { display: flex; gap: 2px; margin-bottom: var(--space-xl); }
+    .step-dot { height: 4px; flex: 1; background: var(--border); }
+    .step-dot.done { background: var(--text-display); }
+    .step-dot.current { background: var(--text-primary); }
+    h2 { font-family: var(--font-display); font-size: var(--display-md); color: var(--text-display); line-height: var(--lh-display-md); }
+    .description { font-size: var(--body); color: var(--text-primary); line-height: var(--lh-body); }
+    .demo-info { font-family: var(--font-mono); font-size: var(--caption); color: var(--text-secondary); letter-spacing: var(--ls-caption); padding: var(--space-md); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); }
+    .nav { display: flex; justify-content: space-between; margin-top: auto; padding-top: var(--space-xl); }
+    .recording-meter { height: 8px; background: var(--border); border-radius: 0; display: flex; gap: 2px; margin: var(--space-md) 0; }
+    .meter-seg { flex: 1; background: var(--border); transition: background var(--duration-micro) var(--ease-out); }
+    .meter-seg.active { background: var(--success); }
+    .timer { font-family: var(--font-mono); font-size: var(--display-lg); color: var(--text-display); text-align: center; }
+    .test-result { padding: var(--space-md); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); }
+    .test-label { font-family: var(--font-mono); font-size: var(--label); letter-spacing: var(--ls-label); text-transform: uppercase; color: var(--text-secondary); margin-bottom: var(--space-xs); }
+    .test-value { font-family: var(--font-body); font-size: var(--body); color: var(--text-primary); }
+  </style>
+</head>
+<body>
+  <div class="step-indicator">
+    <div class="step-dot current" data-step="0"></div>
+    <div class="step-dot" data-step="1"></div>
+    <div class="step-dot" data-step="2"></div>
+    <div class="step-dot" data-step="3"></div>
+    <div class="step-dot" data-step="4"></div>
+  </div>
+
+  <!-- Step 1: Welcome -->
+  <div class="step active" id="step0">
+    <h2>VoiceBridge</h2>
+    <p class="description">Speak any language. In your own voice. Real-time translation for meetings.</p>
+    <div class="demo-info">
+      DEMO: 2 MINUTES OF VOICE TRANSLATION EVERY 24 HOURS. ONLY YOUR SPEAKING TIME COUNTS — SILENCE AND PAUSES ARE FREE. ENTER YOUR OWN API KEY FOR UNLIMITED USAGE.
+    </div>
+    <p class="description" style="font-size:var(--body-sm);color:var(--text-secondary)">
+      Your audio is streamed and never stored. API keys are encrypted locally. No analytics or tracking.
+    </p>
+    <div class="nav">
+      <div></div>
+      <button class="btn btn-primary" id="nextBtn0">Get Started</button>
+    </div>
+  </div>
+
+  <!-- Step 2: API Keys -->
+  <div class="step" id="step1">
+    <h2>API Keys</h2>
+    <div class="field">
+      <label class="input-label" for="obElevenLabsKey">ElevenLabs API Key</label>
+      <input class="input" type="password" id="obElevenLabsKey" placeholder="xi-...">
+    </div>
+    <div class="field">
+      <label class="input-label" for="obLlmKey">LLM API Key (OpenAI or Anthropic)</label>
+      <input class="input" type="password" id="obLlmKey" placeholder="sk-...">
+    </div>
+    <div class="credits-card" style="background:var(--surface);border:1px solid var(--border-visible);border-radius:var(--radius-lg);padding:var(--space-md);">
+      <div class="label" style="margin-bottom:var(--space-sm)">Get Free Credits</div>
+      <p style="font-size:var(--body-sm);color:var(--text-primary)">Hackathon attendees: claim 1 month of ElevenLabs Creator plan free.</p>
+      <a href="https://hacks.elevenlabs.io/hackathons/4" target="_blank" style="color:var(--interactive);text-decoration:none;font-size:var(--body-sm)">Claim credits →</a>
+    </div>
+    <span class="status-inline" id="obKeyStatus"></span>
+    <div class="nav">
+      <button class="btn btn-ghost" id="backBtn1">Back</button>
+      <button class="btn btn-primary" id="nextBtn1">Validate & Continue</button>
+    </div>
+  </div>
+
+  <!-- Step 3: Voice Recording -->
+  <div class="step" id="step2">
+    <h2>Your Voice</h2>
+    <p class="description">Record 30 seconds of your voice. Read the text below naturally.</p>
+    <div class="card" style="font-size:var(--body-sm);color:var(--text-primary);line-height:1.6">
+      "The quick brown fox jumps over the lazy dog. Technology has transformed the way we communicate across borders and languages. In today's interconnected world, the ability to speak and understand multiple languages opens doors to new opportunities and deeper connections with people from diverse backgrounds."
+    </div>
+    <div class="timer" id="recordTimer">0:30</div>
+    <div class="recording-meter" id="recordMeter">
+      <div class="meter-seg"></div><div class="meter-seg"></div><div class="meter-seg"></div>
+      <div class="meter-seg"></div><div class="meter-seg"></div><div class="meter-seg"></div>
+      <div class="meter-seg"></div><div class="meter-seg"></div><div class="meter-seg"></div>
+      <div class="meter-seg"></div>
+    </div>
+    <div class="nav">
+      <button class="btn btn-ghost" id="backBtn2">Back</button>
+      <button class="btn btn-primary" id="recordBtn">Start Recording</button>
+    </div>
+  </div>
+
+  <!-- Step 4: Language Selection -->
+  <div class="step" id="step3">
+    <h2>Languages</h2>
+    <div class="field">
+      <label class="input-label" for="obSourceLang">I speak</label>
+      <select id="obSourceLang" style="font-family:var(--font-mono);font-size:var(--body-sm);background:var(--surface);color:var(--text-primary);border:1px solid var(--border-visible);border-radius:var(--radius-md);padding:var(--space-sm);width:100%;min-height:44px;">
+        <option value="en">English</option>
+        <option value="es">Spanish</option>
+        <option value="fr">French</option>
+        <option value="de">German</option>
+        <option value="ja">Japanese</option>
+        <option value="zh">Chinese</option>
+        <option value="ko">Korean</option>
+        <option value="pt">Portuguese</option>
+        <option value="ar">Arabic</option>
+        <option value="hi">Hindi</option>
+      </select>
+    </div>
+    <div class="field">
+      <label class="input-label" for="obTargetLang">Translate to</label>
+      <select id="obTargetLang" style="font-family:var(--font-mono);font-size:var(--body-sm);background:var(--surface);color:var(--text-primary);border:1px solid var(--border-visible);border-radius:var(--radius-md);padding:var(--space-sm);width:100%;min-height:44px;">
+        <option value="es">Spanish</option>
+        <option value="en">English</option>
+        <option value="fr">French</option>
+        <option value="de">German</option>
+        <option value="ja">Japanese</option>
+        <option value="zh">Chinese</option>
+        <option value="ko">Korean</option>
+        <option value="pt">Portuguese</option>
+        <option value="ar">Arabic</option>
+        <option value="hi">Hindi</option>
+      </select>
+    </div>
+    <div class="nav">
+      <button class="btn btn-ghost" id="backBtn3">Back</button>
+      <button class="btn btn-primary" id="nextBtn3">Continue</button>
+    </div>
+  </div>
+
+  <!-- Step 5: Test -->
+  <div class="step" id="step4">
+    <h2>Test</h2>
+    <p class="description">Speak a short sentence to test the full pipeline.</p>
+    <div class="test-result" id="testResult" style="display:none">
+      <div><span class="test-label">You said</span><div class="test-value" id="testOriginal"></div></div>
+      <div style="margin-top:var(--space-sm)"><span class="test-label">Translated</span><div class="test-value" id="testTranslated"></div></div>
+    </div>
+    <span class="status-inline" id="testStatus">[READY TO TEST]</span>
+    <div class="nav">
+      <button class="btn btn-ghost" id="backBtn4">Back</button>
+      <button class="btn btn-primary" id="testBtn">Run Test</button>
+      <button class="btn btn-primary" id="finishBtn" style="display:none">Finish Setup</button>
+    </div>
+  </div>
+
+  <script src="../onboarding.js" type="module"></script>
+</body>
+</html>

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="../styles/shared.css">
+  <style>
+    body { padding: 0; height: 100vh; display: flex; flex-direction: column; }
+    .toolbar { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-sm) var(--space-md); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .toolbar input { flex: 1; }
+    .transcript-container { flex: 1; overflow-y: auto; padding: var(--space-md); }
+    .transcript-entry { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-md); padding: var(--space-sm) 0; border-bottom: 1px solid var(--border); }
+    .transcript-entry .timestamp { grid-column: 1 / -1; font-family: var(--font-mono); font-size: var(--caption); color: var(--text-secondary); letter-spacing: var(--ls-caption); }
+    .original { font-family: var(--font-body); font-size: var(--body-sm); color: var(--text-primary); }
+    .translated { font-family: var(--font-body); font-size: var(--body-sm); color: var(--text-primary); }
+    .partial { font-style: italic; opacity: 0.7; }
+    .actions { display: flex; gap: var(--space-sm); padding: var(--space-sm) var(--space-md); border-top: 1px solid var(--border); flex-shrink: 0; }
+    .empty-state { display: flex; align-items: center; justify-content: center; flex: 1; color: var(--text-disabled); font-family: var(--font-mono); font-size: var(--caption); text-transform: uppercase; letter-spacing: var(--ls-label); }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <input class="input" type="text" id="searchInput" placeholder="Search transcripts..." aria-label="Search transcripts">
+    <span class="label" id="entryCount">0</span>
+  </div>
+
+  <div class="transcript-container" id="transcriptContainer">
+    <div class="empty-state" id="emptyState">[WAITING FOR SESSION]</div>
+  </div>
+
+  <div class="actions">
+    <button class="btn btn-secondary" id="copyAllBtn">Copy All</button>
+    <button class="btn btn-secondary" id="exportBtn">Export</button>
+  </div>
+
+  <script src="../sidepanel.js" type="module"></script>
+</body>
+</html>

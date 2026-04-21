@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VoiceBridge Settings</title>
+  <link rel="stylesheet" href="../styles/shared.css">
+  <style>
+    body { max-width: 640px; margin: 0 auto; padding: var(--space-xl) var(--space-md); }
+    h1 { font-family: var(--font-display); font-size: var(--display-md); color: var(--text-display); margin-bottom: var(--space-xl); }
+    .section { margin-bottom: var(--space-2xl); }
+    .section-title { font-family: var(--font-mono); font-size: var(--label); letter-spacing: var(--ls-label); text-transform: uppercase; color: var(--text-secondary); margin-bottom: var(--space-md); }
+    .field { margin-bottom: var(--space-md); }
+    .field-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); margin-bottom: var(--space-md); }
+    .slider-container { display: flex; align-items: center; gap: var(--space-sm); }
+    .slider-container input[type="range"] { flex: 1; accent-color: var(--text-primary); }
+    .slider-value { font-family: var(--font-mono); font-size: var(--caption); color: var(--text-secondary); min-width: 36px; text-align: right; }
+    .status-inline { font-family: var(--font-mono); font-size: var(--caption); letter-spacing: var(--ls-caption); }
+    .status-inline.success { color: var(--success); }
+    .status-inline.error { color: var(--accent); }
+    .actions-row { display: flex; gap: var(--space-sm); margin-top: var(--space-md); }
+    .credits-card { background: var(--surface); border: 1px solid var(--border-visible); border-radius: var(--radius-lg); padding: var(--space-md); margin-top: var(--space-md); }
+    .credits-card a { color: var(--interactive); text-decoration: none; }
+    .credits-card a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <h1>Settings</h1>
+
+  <!-- API Keys -->
+  <div class="section">
+    <div class="section-title">API Keys</div>
+    <div class="field">
+      <label class="input-label" for="elevenLabsKey">ElevenLabs API Key</label>
+      <input class="input" type="password" id="elevenLabsKey" placeholder="xi-...">
+      <span class="status-inline" id="elevenLabsStatus"></span>
+    </div>
+    <div class="field">
+      <label class="input-label" for="llmProvider">LLM Provider</label>
+      <select id="llmProvider" style="font-family:var(--font-mono);font-size:var(--body-sm);background:var(--surface);color:var(--text-primary);border:1px solid var(--border-visible);border-radius:var(--radius-md);padding:var(--space-sm);width:100%;min-height:44px;">
+        <option value="openai">OpenAI (GPT-4o)</option>
+        <option value="anthropic">Anthropic (Claude)</option>
+      </select>
+    </div>
+    <div class="field">
+      <label class="input-label" for="llmKey">LLM API Key</label>
+      <input class="input" type="password" id="llmKey" placeholder="sk-...">
+      <span class="status-inline" id="llmStatus"></span>
+    </div>
+    <button class="btn btn-secondary" id="validateKeysBtn">Validate Keys</button>
+
+    <div class="credits-card">
+      <div class="label" style="margin-bottom:var(--space-sm)">Get Free Credits</div>
+      <p style="font-size:var(--body-sm);color:var(--text-primary);margin-bottom:var(--space-sm)">
+        Hackathon attendees can claim 1 month of ElevenLabs Creator plan (100,000 characters) for free.
+      </p>
+      <a href="https://hacks.elevenlabs.io/hackathons/4" target="_blank">Claim free ElevenLabs credits →</a>
+    </div>
+  </div>
+
+  <!-- Voice Profile -->
+  <div class="section">
+    <div class="section-title">Voice Profile</div>
+    <div id="voiceProfileSection">
+      <span class="status-inline" id="voiceProfileStatus">[NOT SET UP]</span>
+      <div class="actions-row">
+        <button class="btn btn-primary" id="recordVoiceBtn">Record Voice</button>
+        <button class="btn btn-secondary" id="previewVoiceBtn" disabled>Preview</button>
+        <button class="btn btn-ghost" id="deleteVoiceBtn" disabled>Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Voice Tuning -->
+  <div class="section">
+    <div class="section-title">Voice Tuning</div>
+    <div class="field-row">
+      <span class="label">Stability</span>
+      <div class="slider-container">
+        <input type="range" id="stability" min="0" max="100" value="50">
+        <span class="slider-value" id="stabilityValue">0.50</span>
+      </div>
+    </div>
+    <div class="field-row">
+      <span class="label">Similarity</span>
+      <div class="slider-container">
+        <input type="range" id="similarity" min="0" max="100" value="75">
+        <span class="slider-value" id="similarityValue">0.75</span>
+      </div>
+    </div>
+    <div class="field-row">
+      <span class="label">Style</span>
+      <div class="slider-container">
+        <input type="range" id="style" min="0" max="100" value="30">
+        <span class="slider-value" id="styleValue">0.30</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Audio Settings -->
+  <div class="section">
+    <div class="section-title">Audio</div>
+    <div class="field-row">
+      <span class="label">Noise Gate</span>
+      <div class="slider-container">
+        <input type="range" id="noiseGate" min="-60" max="-20" value="-40">
+        <span class="slider-value" id="noiseGateValue">-40dB</span>
+      </div>
+    </div>
+    <div class="field-row">
+      <span class="label">VAD Sensitivity</span>
+      <select id="vadSensitivity" style="font-family:var(--font-mono);font-size:var(--body-sm);background:var(--surface);color:var(--text-primary);border:1px solid var(--border-visible);border-radius:var(--radius-md);padding:var(--space-sm);">
+        <option value="low">Low</option>
+        <option value="medium" selected>Medium</option>
+        <option value="high">High</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- Translation -->
+  <div class="section">
+    <div class="section-title">Translation</div>
+    <div class="field-row">
+      <span class="label">Context Window</span>
+      <div class="slider-container">
+        <input type="range" id="contextWindow" min="5" max="20" value="10">
+        <span class="slider-value" id="contextWindowValue">10</span>
+      </div>
+    </div>
+    <div class="field-row">
+      <span class="label">Preserve Technical Terms</span>
+      <button class="toggle" id="preserveTermsToggle" role="switch" aria-checked="true"></button>
+    </div>
+    <div class="field-row">
+      <span class="label">Formality</span>
+      <select id="formality" style="font-family:var(--font-mono);font-size:var(--body-sm);background:var(--surface);color:var(--text-primary);border:1px solid var(--border-visible);border-radius:var(--radius-md);padding:var(--space-sm);">
+        <option value="informal" selected>Informal</option>
+        <option value="formal">Formal</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- Export/Import -->
+  <div class="section">
+    <div class="section-title">Data</div>
+    <div class="actions-row">
+      <button class="btn btn-secondary" id="exportBtn">Export Settings</button>
+      <button class="btn btn-secondary" id="importBtn">Import Settings</button>
+    </div>
+  </div>
+
+  <script src="../options.js" type="module"></script>
+</body>
+</html>

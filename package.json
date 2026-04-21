@@ -1,0 +1,23 @@
+{
+  "name": "voicebridge",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Real-time voice translation for meetings — speak any language in your own voice",
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "tsc --noEmit && vite build",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@elevenlabs/elevenlabs-js": "^2.15.0",
+    "lucide-static": "^0.460.0"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.287",
+    "fast-check": "^3.23.0",
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0",
+    "vitest": "^2.1.0"
+  }
+}

@@ -1,0 +1,185 @@
+/* VoiceBridge Floating Widget — Nothing Design Language */
+
+.vb-widget {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 2147483640;
+  font-family: 'Space Grotesk', 'DM Sans', system-ui, sans-serif;
+  transition: opacity 300ms cubic-bezier(0.25, 0.1, 0.25, 1);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.vb-widget.idle {
+  opacity: 0.3;
+}
+
+.vb-widget:hover,
+.vb-widget.active {
+  opacity: 1;
+  transition-duration: 150ms;
+}
+
+/* Collapsed — 48px circle */
+.vb-collapsed {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: #111111;
+  border: 1px solid #333333;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  position: relative;
+}
+
+.vb-collapsed svg {
+  width: 24px;
+  height: 24px;
+  stroke: #E8E8E8;
+  stroke-width: 1.5;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Accent dot — recording indicator */
+.vb-accent-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #D71921;
+  opacity: 0;
+  transition: opacity 150ms cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+
+.vb-widget.recording .vb-accent-dot {
+  opacity: 1;
+}
+
+/* Expanded — 240x120 card */
+.vb-expanded {
+  width: 240px;
+  min-height: 120px;
+  background: #111111;
+  border: 1px solid #333333;
+  border-radius: 12px;
+  padding: 16px;
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  background-image: radial-gradient(circle, #333333 0.5px, transparent 0.5px);
+  background-size: 12px 12px;
+  position: relative;
+}
+
+.vb-widget:hover .vb-expanded {
+  display: flex;
+}
+
+.vb-widget:hover .vb-collapsed {
+  display: none;
+}
+
+/* Latency — primary layer */
+.vb-latency {
+  font-family: 'Space Mono', monospace;
+  font-size: 36px;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: #FFFFFF;
+}
+
+.vb-latency-unit {
+  font-family: 'Space Mono', monospace;
+  font-size: 11px;
+  line-height: 1.2;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #999999;
+  margin-left: 4px;
+}
+
+.vb-latency.good { color: #4A9E5C; }
+.vb-latency.moderate { color: #D4A843; }
+.vb-latency.poor { color: #D71921; }
+
+/* Language pair — secondary layer */
+.vb-languages {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #E8E8E8;
+}
+
+/* Session duration — tertiary layer */
+.vb-duration {
+  font-family: 'Space Mono', monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  letter-spacing: 0.04em;
+  color: #999999;
+  text-transform: uppercase;
+}
+
+/* Status text — inline errors */
+.vb-status {
+  font-family: 'Space Mono', monospace;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: #999999;
+}
+
+.vb-status.error { color: #D71921; }
+.vb-status.warning { color: #D4A843; }
+
+/* Ghost mode */
+.vb-widget.ghost .vb-collapsed svg {
+  opacity: 0.6;
+}
+
+.vb-widget.ghost .vb-collapsed {
+  animation: vb-ghost-pulse 2s ease-in-out infinite;
+}
+
+@keyframes vb-ghost-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.6; }
+}
+
+/* Roulette — language display */
+.vb-roulette-lang {
+  font-family: 'Doto', 'Space Mono', monospace;
+  font-size: 36px;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: #FFFFFF;
+  transition: opacity 150ms cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+
+/* Segmented progress (widget version) */
+.vb-progress {
+  display: flex;
+  gap: 2px;
+  height: 4px;
+}
+
+.vb-progress-seg {
+  flex: 1;
+  background: #222222;
+}
+
+.vb-progress-seg.filled {
+  background: #E8E8E8;
+}
+
+/* Dragging */
+.vb-widget.dragging {
+  cursor: grabbing;
+  opacity: 1 !important;
+}

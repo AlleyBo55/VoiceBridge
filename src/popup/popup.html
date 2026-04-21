@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="../styles/shared.css">
+  <style>
+    body { width: 400px; max-height: 500px; padding: var(--space-md); overflow-y: auto; }
+    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-lg); }
+    .logo { font-family: var(--font-display); font-size: var(--heading); color: var(--text-display); }
+    .version { font-family: var(--font-mono); font-size: var(--caption); color: var(--text-disabled); }
+    .main-toggle { display: flex; align-items: center; justify-content: space-between; padding: var(--space-md); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); margin-bottom: var(--space-md); }
+    .toggle-label { font-family: var(--font-mono); font-size: var(--label); letter-spacing: var(--ls-label); text-transform: uppercase; color: var(--text-secondary); }
+    .language-section { margin-bottom: var(--space-md); }
+    .language-row { display: flex; gap: var(--space-sm); align-items: center; margin-bottom: var(--space-sm); }
+    .language-row select { flex: 1; font-family: var(--font-mono); font-size: var(--body-sm); background: var(--surface); color: var(--text-primary); border: 1px solid var(--border-visible); border-radius: var(--radius-md); padding: var(--space-sm) var(--space-md); min-height: 44px; }
+    .arrow { font-family: var(--font-mono); color: var(--text-disabled); font-size: var(--body); }
+    .status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-sm); margin-bottom: var(--space-md); }
+    .status-item { padding: var(--space-sm); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); }
+    .status-label { font-family: var(--font-mono); font-size: var(--label); letter-spacing: var(--ls-label); text-transform: uppercase; color: var(--text-secondary); margin-bottom: var(--space-xs); }
+    .status-value { font-family: var(--font-mono); font-size: var(--body-sm); color: var(--text-primary); }
+    .status-value.good { color: var(--success); }
+    .status-value.moderate { color: var(--warning); }
+    .status-value.poor { color: var(--accent); }
+    .connection-dots { display: flex; gap: var(--space-xs); align-items: center; }
+    .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-disabled); }
+    .dot.connected { background: var(--success); }
+    .dot.error { background: var(--accent); }
+    .voice-time { padding: var(--space-sm) var(--space-md); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); margin-bottom: var(--space-md); display: flex; justify-content: space-between; align-items: center; }
+    .footer { display: flex; justify-content: space-between; align-items: center; padding-top: var(--space-sm); border-top: 1px solid var(--border); }
+    .cost { font-family: var(--font-mono); font-size: var(--caption); color: var(--text-secondary); }
+    .features { display: flex; gap: var(--space-xs); }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <span class="logo">VoiceBridge</span>
+    <span class="version" id="version">v1.0.0</span>
+  </div>
+
+  <div class="main-toggle">
+    <span class="toggle-label">Translation</span>
+    <button class="toggle" id="mainToggle" role="switch" aria-checked="false" aria-label="Toggle translation"></button>
+  </div>
+
+  <div class="language-section">
+    <div class="language-row">
+      <select id="sourceLanguage" aria-label="Source language">
+        <option value="auto">Auto-detect</option>
+      </select>
+      <span class="arrow">→</span>
+      <select id="targetLanguage" aria-label="Target language">
+        <option value="es">Spanish</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="status-grid">
+    <div class="status-item">
+      <div class="status-label">Latency</div>
+      <div class="status-value" id="latency">— ms</div>
+    </div>
+    <div class="status-item">
+      <div class="status-label">Voice</div>
+      <div class="status-value" id="voiceStatus">Not Set Up</div>
+    </div>
+    <div class="status-item">
+      <div class="status-label">Connections</div>
+      <div class="connection-dots">
+        <span class="dot" id="sttDot" title="STT"></span>
+        <span class="dot" id="ttsDot" title="TTS"></span>
+        <span class="dot" id="llmDot" title="LLM"></span>
+      </div>
+    </div>
+    <div class="status-item">
+      <div class="status-label">Session</div>
+      <div class="status-value" id="sessionDuration">0:00</div>
+    </div>
+  </div>
+
+  <div class="voice-time" id="voiceTimeSection">
+    <span class="label">Voice Time</span>
+    <span class="status-value mono" id="voiceTimeRemaining">2:00 LEFT</span>
+  </div>
+
+  <div class="features">
+    <button class="btn btn-ghost" id="ghostModeBtn" aria-label="Toggle Ghost Mode" title="Ghost Mode">👻</button>
+    <button class="btn btn-ghost" id="rouletteBtn" aria-label="Language Roulette" title="Language Roulette">🎰</button>
+  </div>
+
+  <div class="footer">
+    <span class="cost" id="sessionCost">~$0.00</span>
+    <button class="btn btn-ghost" id="settingsBtn" aria-label="Open settings">Settings</button>
+  </div>
+
+  <script src="../popup.js" type="module"></script>
+</body>
+</html>

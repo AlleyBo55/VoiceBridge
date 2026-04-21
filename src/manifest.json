@@ -1,0 +1,73 @@
+{
+  "manifest_version": 3,
+  "name": "VoiceBridge",
+  "version": "1.0.0",
+  "description": "Real-time voice translation for meetings — speak any language in your own voice",
+  "permissions": ["activeTab", "sidePanel", "storage", "tabCapture", "offscreen"],
+  "host_permissions": [
+    "https://meet.google.com/*",
+    "https://zoom.us/*",
+    "https://teams.microsoft.com/*",
+    "https://discord.com/*",
+    "https://api.elevenlabs.io/*"
+  ],
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://meet.google.com/*",
+        "https://*.zoom.us/*",
+        "https://teams.microsoft.com/*",
+        "https://discord.com/channels/*"
+      ],
+      "js": ["content-script.js"],
+      "css": ["assets/widget.css"],
+      "run_at": "document_start"
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "side_panel": {
+    "default_path": "sidepanel/sidepanel.html"
+  },
+  "options_page": "options/options.html",
+  "commands": {
+    "toggle-translation": {
+      "suggested_key": { "default": "Alt+T" },
+      "description": "Toggle translation"
+    },
+    "push-to-translate": {
+      "suggested_key": { "default": "Ctrl+Space" },
+      "description": "Push to translate (hold)"
+    },
+    "panic-stop": {
+      "suggested_key": { "default": "Ctrl+Shift+X" },
+      "description": "Emergency stop"
+    },
+    "toggle-ghost-mode": {
+      "suggested_key": { "default": "Alt+G" },
+      "description": "Toggle Ghost Mode"
+    },
+    "language-roulette": {
+      "suggested_key": { "default": "Alt+R" },
+      "description": "Language Roulette"
+    }
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'"
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
+}
