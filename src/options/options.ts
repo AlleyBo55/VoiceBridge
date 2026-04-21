@@ -95,6 +95,14 @@ function setupEventListeners(): void {
       if (res.ok) {
         elevenLabsStatus.textContent = '[VALID]';
         elevenLabsStatus.className = 'status-inline success';
+        // Clear exhaustion flag on successful validation
+        await setSetting('embeddedKeyExhausted', false);
+      } else if (res.status === 402) {
+        // Embedded key exhausted — flag it and prompt for personal key
+        await setSetting('embeddedKeyExhausted', true);
+        await setSetting('embeddedKeyLastChecked', Date.now());
+        elevenLabsStatus.textContent = '[KEY EXHAUSTED — ENTER YOUR OWN KEY]';
+        elevenLabsStatus.className = 'status-inline error';
       } else {
         elevenLabsStatus.textContent = '[INVALID]';
         elevenLabsStatus.className = 'status-inline error';

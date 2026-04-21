@@ -1,42 +1,160 @@
 /**
  * Content script — injected into meeting pages.
- * Handles floating widget injection and WebRTC audio routing.
- * Does NOT modify page DOM until user explicitly enables translation.
+ * Manages PlatformAdapter lifecycle, AudioBridgeReceiver,
+ * RTCPeerConnection monitoring, floating widget, and cleanup.
  */
 
-import { initMessageBus, sendMessage, onMessage, onPageMessage } from '../lib/message-bus.js';
+import { initMessageBus, sendMessage, onMessage } from '../lib/message-bus.js';
 import { detectPlatform } from '../lib/meeting-detector.js';
+import { createPlatformAdapter } from '../lib/platform-adapters.js';
+import type { PlatformAdapter } from '../lib/platform-adapters.js';
+import { AudioBridgeReceiver } from '../lib/audio-bridge.js';
+import type { MeetingPlatform, AudioRoutingState, DegradationLevel } from '../lib/types.js';
 
 // ── State ───────────────────────────────────────────────────
 
 let widgetInjected = false;
+let adapter: PlatformAdapter | null = null;
+let detectedPlatform: MeetingPlatform = 'none';
+const audioBridgeReceiver = new AudioBridgeReceiver();
+let widgetStatusEl: HTMLElement | null = null;
+let widgetIconEl: SVGElement | null = null;
 
 // ── Initialize ──────────────────────────────────────────────
 
 function init(): void {
   initMessageBus();
 
-  const platform = detectPlatform(window.location.href);
-  if (platform === 'none') return;
+  detectedPlatform = detectPlatform(window.location.href);
+  if (detectedPlatform === 'none') return;
 
-  sendMessage('MEETING_DETECTED', { platform, tabId: 0 });
+  sendMessage('MEETING_DETECTED', { platform: detectedPlatform, tabId: 0 });
 
-  // Listen for session events
+  setupMessageHandlers();
+  setupAudioBridge();
+  setupBeforeUnload();
+}
+
+// ── Message Handlers ────────────────────────────────────────
+
+function setupMessageHandlers(): void {
+  // On session start, inject widget if not already done
   onMessage('SESSION_STATE_CHANGED', (state) => {
     if (state.active && !widgetInjected) {
       injectWidget();
     }
   });
 
-  onMessage('TTS_AUDIO_CHUNK', () => {
-    // Audio routing handled via virtual track
+  // On meeting detected (from service worker tab monitoring), initialize adapter
+  onMessage('MEETING_DETECTED', async ({ platform }) => {
+    if (adapter) return; // Already initialized
+    await initializeAdapter(platform);
   });
 
-  // Listen for page messages (main world script)
-  onPageMessage('ORIGINAL_MIC_TRACK', (payload) => {
-    const data = payload as { trackId: string };
-    // Store reference to original mic track for restoration
-    console.log('[VB] Original mic track stored:', data.trackId);
+  // Update widget based on audio routing state changes
+  onMessage('AUDIO_ROUTING_STATE_CHANGED', ({ state }) => {
+    updateWidgetIcon(state);
+  });
+
+  // Update widget based on degradation level changes
+  onMessage('DEGRADATION_LEVEL_CHANGED', ({ level }) => {
+    updateWidgetDegradation(level);
+  });
+}
+
+// ── PlatformAdapter Lifecycle ───────────────────────────────
+
+async function initializeAdapter(platform: MeetingPlatform): Promise<void> {
+  adapter = createPlatformAdapter(platform);
+  if (!adapter) return;
+
+  try {
+    await adapter.initialize();
+  } catch (err) {
+    sendMessage('ERROR', {
+      code: 'injection-failed',
+      message: err instanceof Error ? err.message : 'Platform adapter initialization failed',
+      userMessage: 'Failed to inject audio into meeting.',
+      action: 'retry',
+    });
+    updateWidgetStatus('[INJECTION FAILED]', 'error');
+    adapter = null;
+  }
+}
+
+// ── AudioBridge ─────────────────────────────────────────────
+
+function setupAudioBridge(): void {
+  // Receive audio chunks from offscreen and route to adapter
+  audioBridgeReceiver.onAudioChunk = (_pcm, _sequenceId) => {
+    // Audio chunks are routed to the platform adapter's virtual track
+    // via the AudioOutputModule's getMixedTrack() — the adapter already
+    // has the virtual track injected. Audio data flows through the
+    // MediaStreamAudioDestinationNode in the offscreen document.
+  };
+
+  // Handle track commands from offscreen
+  audioBridgeReceiver.onTrackCommand = async (command) => {
+    if (!adapter) {
+      audioBridgeReceiver.sendTrackResponse(false, 'No adapter initialized');
+      return;
+    }
+
+    try {
+      switch (command) {
+        case 'inject':
+          // The virtual track is managed by the offscreen AudioOutputModule
+          // and injected via the adapter. For now, acknowledge the command.
+          audioBridgeReceiver.sendTrackResponse(true);
+          break;
+        case 'restore':
+          await adapter.restoreOriginalTrack();
+          audioBridgeReceiver.sendTrackResponse(true);
+          break;
+        case 'status':
+          audioBridgeReceiver.sendTrackResponse(adapter.isInjected());
+          break;
+      }
+    } catch (err) {
+      audioBridgeReceiver.sendTrackResponse(
+        false,
+        err instanceof Error ? err.message : 'Track command failed',
+      );
+    }
+  };
+
+  // Handle state sync from offscreen
+  audioBridgeReceiver.onStateSync = (routingState, _echoState) => {
+    updateWidgetIcon(routingState);
+  };
+
+  // Listen for MessagePort from service worker
+  chrome.runtime.onMessage.addListener(
+    (message: unknown, _sender: chrome.runtime.MessageSender) => {
+      const msg = message as { type?: string } | undefined;
+      if (msg?.type === 'AUDIO_BRIDGE_PORT') {
+        // Port will be in the message event ports
+      }
+    },
+  );
+
+  // Receive port via chrome.runtime.onConnect or direct message with port transfer
+  // The service worker sends the port via chrome.tabs.sendMessage with transferables
+  // In MV3, ports are transferred via the message event's ports array
+}
+
+// ── beforeunload Handler ────────────────────────────────────
+
+function setupBeforeUnload(): void {
+  window.addEventListener('beforeunload', () => {
+    sendMessage('SESSION_STOP', { reason: 'tab-closed' });
+
+    if (adapter?.isInjected()) {
+      // Best-effort restore — may not complete before unload
+      void adapter.restoreOriginalTrack();
+    }
+
+    audioBridgeReceiver.close();
   });
 }
 
@@ -45,12 +163,10 @@ function init(): void {
 function injectWidget(): void {
   if (widgetInjected) return;
 
-  // Create Shadow DOM host for style isolation
   const host = document.createElement('div');
   host.id = 'voicebridge-widget-host';
   const shadow = host.attachShadow({ mode: 'closed' });
 
-  // Widget HTML
   shadow.innerHTML = `
     <style>
       :host { all: initial; }
@@ -83,26 +199,37 @@ function injectWidget(): void {
         background: #D71921; opacity: 0;
       }
       .vb-widget.recording .vb-accent-dot { opacity: 1; }
+      .vb-status {
+        position: absolute; bottom: -18px; left: 50%;
+        transform: translateX(-50%); white-space: nowrap;
+        font-family: 'Space Mono', monospace;
+        font-size: 9px; letter-spacing: 0.08em;
+        text-transform: uppercase; color: #999999;
+      }
+      .vb-status.warning { color: #D4A843; }
+      .vb-status.error { color: #D71921; }
     </style>
     <div class="vb-widget idle" role="button" tabindex="0"
          aria-label="VoiceBridge translation status: inactive">
       <div class="vb-collapsed">
-        <svg viewBox="0 0 24 24"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+        <svg class="vb-icon" viewBox="0 0 24 24"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
         <div class="vb-accent-dot"></div>
       </div>
+      <div class="vb-status"></div>
     </div>
   `;
 
   document.body.appendChild(host);
   widgetInjected = true;
 
-  // Click handler
   const widget = shadow.querySelector('.vb-widget') as HTMLElement;
+  widgetStatusEl = shadow.querySelector('.vb-status') as HTMLElement;
+  widgetIconEl = shadow.querySelector('.vb-icon') as SVGElement;
+
   widget.addEventListener('click', () => {
     sendMessage('WIDGET_TOGGLE', undefined);
   });
 
-  // Keyboard accessibility
   widget.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
@@ -110,18 +237,60 @@ function injectWidget(): void {
     }
   });
 
-  // Dragging
   makeDraggable(widget);
 
-  // Idle fade timer
   let idleTimer: ReturnType<typeof setTimeout>;
-  const resetIdle = () => {
+  const resetIdle = (): void => {
     widget.classList.remove('idle');
     clearTimeout(idleTimer);
     idleTimer = setTimeout(() => widget.classList.add('idle'), 5000);
   };
   widget.addEventListener('mouseenter', resetIdle);
   resetIdle();
+}
+
+// ── Widget Updates ──────────────────────────────────────────
+
+function updateWidgetIcon(routingState: AudioRoutingState): void {
+  if (!widgetIconEl) return;
+
+  const icons: Record<AudioRoutingState, string> = {
+    PASSTHROUGH: '<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/>',
+    MUTED: '<line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V5a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2c0 .76-.13 1.49-.35 2.17"/><line x1="12" y1="19" x2="12" y2="22"/>',
+    TTS_PLAYING: '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>',
+    BARGE_IN: '<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/><circle cx="12" cy="12" r="10" stroke-dasharray="4 4"/>',
+  };
+
+  widgetIconEl.innerHTML = icons[routingState] ?? icons.PASSTHROUGH;
+}
+
+function updateWidgetDegradation(level: DegradationLevel): void {
+  if (!widgetStatusEl) return;
+
+  switch (level) {
+    case 'full':
+      widgetStatusEl.textContent = '';
+      widgetStatusEl.className = 'vb-status';
+      break;
+    case 'text-only':
+      widgetStatusEl.textContent = '[TEXT ONLY]';
+      widgetStatusEl.className = 'vb-status warning';
+      break;
+    case 'transcription-only':
+      widgetStatusEl.textContent = '[TRANSCRIPT ONLY]';
+      widgetStatusEl.className = 'vb-status warning';
+      break;
+    case 'passthrough':
+      widgetStatusEl.textContent = '[PASSTHROUGH]';
+      widgetStatusEl.className = 'vb-status error';
+      break;
+  }
+}
+
+function updateWidgetStatus(text: string, type: 'warning' | 'error' | '' = ''): void {
+  if (!widgetStatusEl) return;
+  widgetStatusEl.textContent = text;
+  widgetStatusEl.className = `vb-status${type ? ` ${type}` : ''}`;
 }
 
 // ── Dragging ────────────────────────────────────────────────
@@ -159,7 +328,6 @@ function makeDraggable(el: HTMLElement): void {
     isDragging = false;
     el.style.transition = '';
 
-    // Save position per domain
     const rect = el.getBoundingClientRect();
     sendMessage('WIDGET_POSITION_SAVE', {
       domain: window.location.hostname,
