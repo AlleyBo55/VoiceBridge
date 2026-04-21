@@ -122,10 +122,13 @@ async function handleSessionStart(payload: { sourceLanguage: string; targetLangu
     model: 'scribe_v1',
   });
 
+  const openRouterModel = await getSetting('openRouterModel');
+
   // Initialize translation engine
   translationEngine = new TranslationEngine({
     provider: llmProvider,
     apiKey: llmApiKey,
+    openRouterModel,
     sourceLanguage: payload.sourceLanguage,
     targetLanguage: payload.targetLanguage,
   });

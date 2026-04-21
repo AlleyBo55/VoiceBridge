@@ -14,6 +14,7 @@ export interface SettingsSchema {
 
   // Synced (chrome.storage.sync)
   llmProvider: LLMProvider;
+  openRouterModel: string;
   sourceLanguage: string;
   targetLanguage: string;
   recentLanguages: string[];
@@ -55,7 +56,7 @@ const ENCRYPTED_KEYS: ReadonlySet<keyof SettingsSchema> = new Set([
 ]);
 
 const SYNCED_KEYS: ReadonlySet<keyof SettingsSchema> = new Set([
-  'llmProvider', 'sourceLanguage', 'targetLanguage', 'recentLanguages',
+  'llmProvider', 'openRouterModel', 'sourceLanguage', 'targetLanguage', 'recentLanguages',
   'contextWindowSize', 'preserveTechnicalTerms', 'customGlossary',
   'meetingContext', 'formalityLevel', 'noiseGateThresholdDb',
   'vadSensitivity', 'echoCancellationMode', 'voiceStability',
@@ -66,6 +67,7 @@ const SYNCED_KEYS: ReadonlySet<keyof SettingsSchema> = new Set([
 
 const DEFAULTS: Partial<SettingsSchema> = {
   llmProvider: 'openai',
+  openRouterModel: 'openai/gpt-4o',
   sourceLanguage: 'auto',
   targetLanguage: 'es',
   recentLanguages: [],

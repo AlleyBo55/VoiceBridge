@@ -9,6 +9,8 @@ import { getSetting, setSetting, exportSettings, importSettings } from '../lib/s
 
 const elevenLabsKeyInput = document.getElementById('elevenLabsKey') as HTMLInputElement;
 const llmProviderSelect = document.getElementById('llmProvider') as HTMLSelectElement;
+const openRouterModelInput = document.getElementById('openRouterModel') as HTMLInputElement;
+const openRouterModelField = document.getElementById('openRouterModelField')!;
 const llmKeyInput = document.getElementById('llmKey') as HTMLInputElement;
 const validateKeysBtn = document.getElementById('validateKeysBtn')!;
 const elevenLabsStatus = document.getElementById('elevenLabsStatus')!;
@@ -38,6 +40,10 @@ async function init(): Promise<void> {
 
   const llmProvider = await getSetting('llmProvider');
   llmProviderSelect.value = llmProvider;
+  toggleOpenRouterField(llmProvider);
+
+  const openRouterModel = await getSetting('openRouterModel');
+  if (openRouterModel) openRouterModelInput.value = openRouterModel;
 
   const llmKey = await getSetting('llmApiKey');
   if (llmKey) llmKeyInput.value = '••••••••';
@@ -52,9 +58,20 @@ async function init(): Promise<void> {
   setupEventListeners();
 }
 
+// ── Helpers ──────────────────────────────────────────────────
+
+function toggleOpenRouterField(provider: string): void {
+  openRouterModelField.style.display = provider === 'openrouter' ? '' : 'none';
+}
+
 // ── Event Listeners ─────────────────────────────────────────
 
 function setupEventListeners(): void {
+  // Show/hide OpenRouter model field based on provider selection
+  llmProviderSelect.addEventListener('change', () => {
+    toggleOpenRouterField(llmProviderSelect.value);
+  });
+
   // API key validation
   validateKeysBtn.addEventListener('click', async () => {
     // Save keys first
@@ -64,7 +81,10 @@ function setupEventListeners(): void {
     if (llmKeyInput.value && !llmKeyInput.value.startsWith('••')) {
       await setSetting('llmApiKey', llmKeyInput.value);
     }
-    await setSetting('llmProvider', llmProviderSelect.value as 'openai' | 'anthropic');
+    await setSetting('llmProvider', llmProviderSelect.value as 'openai' | 'anthropic' | 'openrouter');
+    if (llmProviderSelect.value === 'openrouter') {
+      await setSetting('openRouterModel', openRouterModelInput.value);
+    }
 
     // Validate ElevenLabs
     try {

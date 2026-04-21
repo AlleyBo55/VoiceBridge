@@ -182,7 +182,7 @@ export type VADState =
 
 // ── Settings Types ──────────────────────────────────────────
 
-export type LLMProvider = 'openai' | 'anthropic';
+export type LLMProvider = 'openai' | 'anthropic' | 'openrouter';
 
 export interface GlossaryEntry {
   source: string;

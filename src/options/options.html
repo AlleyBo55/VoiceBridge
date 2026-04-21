@@ -40,7 +40,13 @@
       <select id="llmProvider" style="font-family:var(--font-mono);font-size:var(--body-sm);background:var(--surface);color:var(--text-primary);border:1px solid var(--border-visible);border-radius:var(--radius-md);padding:var(--space-sm);width:100%;min-height:44px;">
         <option value="openai">OpenAI (GPT-4o)</option>
         <option value="anthropic">Anthropic (Claude)</option>
+        <option value="openrouter">OpenRouter (any model)</option>
       </select>
+    </div>
+    <div class="field" id="openRouterModelField" style="display:none">
+      <label class="input-label" for="openRouterModel">OpenRouter Model</label>
+      <input class="input" type="text" id="openRouterModel" placeholder="openai/gpt-4o" value="openai/gpt-4o">
+      <span style="font-family:var(--font-mono);font-size:var(--caption);color:var(--text-disabled);margin-top:var(--space-xs);display:block">e.g. openai/gpt-4o, anthropic/claude-sonnet-4, google/gemini-2.5-flash, meta-llama/llama-4-maverick</span>
     </div>
     <div class="field">
       <label class="input-label" for="llmKey">LLM API Key</label>

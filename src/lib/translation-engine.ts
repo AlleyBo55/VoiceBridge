@@ -1,6 +1,6 @@
 /**
  * LLM-based translation engine with streaming, context window, and buffering.
- * Supports OpenAI and Anthropic providers.
+ * Supports OpenAI, Anthropic, and OpenRouter providers.
  */
 
 import type { LLMProvider, GlossaryEntry } from './types.js';
@@ -18,6 +18,7 @@ const MAX_LENGTH_RATIO = 3;
 export interface TranslationConfig {
   provider: LLMProvider;
   apiKey: string;
+  openRouterModel: string;
   sourceLanguage: string;
   targetLanguage: string;
   contextWindowSize: number;
@@ -31,6 +32,7 @@ export interface TranslationConfig {
 const DEFAULT_CONFIG: TranslationConfig = {
   provider: 'openai',
   apiKey: '',
+  openRouterModel: 'openai/gpt-4o',
   sourceLanguage: 'auto',
   targetLanguage: 'es',
   contextWindowSize: 10,
@@ -247,6 +249,8 @@ export class TranslationEngine {
 
       if (this.#config.provider === 'openai') {
         yield* this.#streamOpenAI(systemPrompt, markedText, controller.signal, tokens);
+      } else if (this.#config.provider === 'openrouter') {
+        yield* this.#streamOpenRouter(systemPrompt, markedText, controller.signal, tokens);
       } else {
         yield* this.#streamAnthropic(systemPrompt, markedText, controller.signal, tokens);
       }
@@ -374,6 +378,77 @@ export class TranslationEngine {
           if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
             tokens.push(parsed.delta.text);
             yield parsed.delta.text;
+          }
+        } catch {
+          // Skip malformed chunks
+        }
+      }
+    }
+  }
+
+  /**
+   * Stream via OpenRouter — OpenAI-compatible API that routes to any model.
+   * Supports OpenAI, Anthropic, Llama, Mistral, Gemini, and 200+ models.
+   */
+  async *#streamOpenRouter(
+    systemPrompt: string,
+    text: string,
+    signal: AbortSignal,
+    tokens: string[]
+  ): AsyncGenerator<string> {
+    const model = this.#config.openRouterModel || 'openai/gpt-4o';
+
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.#config.apiKey}`,
+        'HTTP-Referer': 'https://voicebridge.app',
+        'X-Title': 'VoiceBridge',
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: text },
+        ],
+        stream: true,
+        max_tokens: 1000,
+        temperature: 0.3,
+      }),
+      signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`OpenRouter API error: ${response.status}`);
+    }
+
+    // OpenRouter uses the same SSE format as OpenAI
+    const reader = response.body?.getReader();
+    if (!reader) return;
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const data = line.slice(6);
+        if (data === '[DONE]') return;
+
+        try {
+          const parsed = JSON.parse(data) as { choices?: Array<{ delta?: { content?: string } }> };
+          const token = parsed.choices?.[0]?.delta?.content;
+          if (token) {
+            tokens.push(token);
+            yield token;
           }
         } catch {
           // Skip malformed chunks

@@ -9,7 +9,10 @@
     "https://zoom.us/*",
     "https://teams.microsoft.com/*",
     "https://discord.com/*",
-    "https://api.elevenlabs.io/*"
+    "https://api.elevenlabs.io/*",
+    "https://api.openai.com/*",
+    "https://api.anthropic.com/*",
+    "https://openrouter.ai/*"
   ],
   "background": {
     "service_worker": "service-worker.js",

@@ -23,7 +23,7 @@ Five stages. Under two seconds. Zero compromise.
 |-------|-----------|---------|
 | Capture | Web Audio API + AudioWorklet | 250ms |
 | Transcribe | ElevenLabs Scribe (real-time STT) | 500ms |
-| Translate | GPT-4o / Claude streaming | 300ms |
+| Translate | LLM via OpenAI / Anthropic / OpenRouter | 300ms |
 | Synthesize | ElevenLabs Streaming TTS | 300ms |
 | Deliver | WebRTC track injection | 100ms |
 
@@ -123,7 +123,7 @@ That's it. Five steps. You're multilingual.
 | Build | Vite | Fast. Tree-shakes aggressively. |
 | STT | ElevenLabs Scribe | Real-time WebSocket streaming |
 | TTS | ElevenLabs Multilingual v2 | Voice cloning + streaming |
-| Translation | OpenAI GPT-4o / Anthropic Claude | Streaming, contextual |
+| Translation | OpenAI / Anthropic / OpenRouter | Streaming, contextual, 200+ models via OpenRouter |
 | Audio | Web Audio API + AudioWorklet | Zero main-thread blocking |
 | Icons | Lucide (thin) | Monoline. Nothing-compatible. |
 | Tests | Vitest + fast-check | Property-based correctness |
