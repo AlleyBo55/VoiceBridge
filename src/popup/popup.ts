@@ -5,6 +5,7 @@
 
 import { initMessageBus, sendMessage, onMessage } from '../lib/message-bus.js';
 import { getSetting, setSetting } from '../lib/settings-store.js';
+import { populateLanguageSelect } from '../lib/languages.js';
 import type { SessionState } from '../lib/types.js';
 
 // ── DOM Elements ────────────────────────────────────────────
@@ -34,11 +35,11 @@ let durationInterval: ReturnType<typeof setInterval> | null = null;
 async function init(): Promise<void> {
   initMessageBus();
 
-  // Load saved language preferences
+  // Populate language dropdowns with all ElevenLabs supported languages
   const source = await getSetting('sourceLanguage');
   const target = await getSetting('targetLanguage');
-  if (source) sourceLanguage.value = source;
-  if (target) targetLanguage.value = target;
+  populateLanguageSelect(sourceLanguage, { includeAutoDetect: true, selectedCode: source || 'auto' });
+  populateLanguageSelect(targetLanguage, { selectedCode: target || 'es' });
 
   // Check onboarding status
   const onboarded = await getSetting('onboardingComplete');

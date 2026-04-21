@@ -122,6 +122,7 @@ export class AudioCaptureModule {
       audio: {
         echoCancellation: true,
         noiseSuppression: true,
+        autoGainControl: true,
         sampleRate: SAMPLE_RATE,
       },
     });
