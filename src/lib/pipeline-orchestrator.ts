@@ -88,31 +88,11 @@ export class PipelineOrchestrator {
     this.#currentSequenceId = 0; this.#playbackHead = 1; this.#utterances.clear();
     this.#consecutiveHighLatency = 0; this.#totalUtterances = 0; this.#droppedUtterances = 0;
     this.#sessionActive = true; this.#sessionStartedAt = Date.now();
-
-    // Read all required settings
     const apiKey = await getSetting('elevenLabsApiKey');
-    const llmApiKey = await getSetting('llmApiKey');
-    const llmProvider = await getSetting('llmProvider');
-    const openRouterModel = await getSetting('openRouterModel');
-    const voiceId = await getSetting('voiceProfileId');
-    const voiceStability = await getSetting('voiceStability');
-    const voiceSimilarityBoost = await getSetting('voiceSimilarityBoost');
-    const voiceStyle = await getSetting('voiceStyle');
-
-    // Use a default ElevenLabs voice if no clone exists
-    const DEFAULT_VOICE_ID = 'JBFqnCBsd6RMkjVDRZzb'; // "George" — built-in ElevenLabs voice
-    const effectiveVoiceId = voiceId || DEFAULT_VOICE_ID;
-
     this.#latencyMonitor = new LatencyMonitor();
     this.#audioCapture = new AudioCaptureModule();
     this.#sttClient = new STTClient(apiKey);
-    this.#translationEngine = new TranslationEngine({
-      provider: llmProvider,
-      apiKey: llmApiKey,
-      openRouterModel,
-      sourceLanguage: params.sourceLanguage,
-      targetLanguage: params.targetLanguage,
-    });
+    this.#translationEngine = new TranslationEngine({ sourceLanguage: params.sourceLanguage, targetLanguage: params.targetLanguage });
     this.#ttsClient = new TTSClient();
     this.#audioOutput = new AudioOutputModule();
     this.#echoCancellation = new EchoCancellationModule({
@@ -120,29 +100,8 @@ export class PipelineOrchestrator {
       onStopTTS: () => this.#audioOutput?.stopPlayback(), onFadeOutTTS: (ms) => this.#audioOutput?.fadeOut(ms),
       onStateChange: () => { /* tracked via routing */ },
     });
-
-    // Initialize audio output and capture
-    await this.#audioOutput.initialize();
-    await this.#audioCapture.start();
-
-    // Connect STT (Scribe v2 Realtime)
-    await this.#sttClient.connect({ encoding: 'pcm_16000', languageCode: params.sourceLanguage, model: 'scribe_v2_realtime' });
-
-    // Connect TTS (Flash v2.5 for lowest latency)
-    await this.#ttsClient.connect({
-      voiceId: effectiveVoiceId,
-      modelId: 'eleven_flash_v2_5',
-      outputFormat: 'pcm_24000',
-      voiceSettings: {
-        stability: voiceStability,
-        similarityBoost: voiceSimilarityBoost,
-        style: voiceStyle,
-        useSpeakerBoost: true,
-      },
-      apiKey,
-    });
-
-    // Wire callbacks
+    await this.#audioOutput.initialize(); await this.#audioCapture.start();
+    await this.#sttClient.connect({ encoding: 'pcm_16000', languageCode: params.sourceLanguage, model: 'scribe_v1' });
     this.#audioCapture.onSpeechEnd = () => this.handleSpeechEnd();
     this.#audioCapture.onAudioChunk = (chunk) => this.#sttClient?.sendAudio(chunk);
     this.#sttClient.onFinalTranscript = (t) => this.handleFinalTranscript(t.sequenceId, t.text, t.language);
@@ -150,18 +109,8 @@ export class PipelineOrchestrator {
     this.#ttsClient.onAudioChunk = (pcm, id) => this.handleTTSAudio(pcm, id);
     this.#ttsClient.onPlaybackEnd = (id) => this.handlePlaybackEnd(id);
     this.#ttsClient.onConnectionStateChange = (s) => this.handleServiceStateChange('tts', s);
-
-    // Mark LLM as connected (it's HTTP, not WebSocket — always "connected" if key exists)
-    if (llmApiKey) {
-      this.handleServiceStateChange('llm', { status: 'connected' });
-    }
-
     this.#transitionRouting({ type: 'session_start' }); this.#startHeartbeat(); this.#emitSessionState();
-    sendMessage('PIPELINE_STAGE_UPDATE', { stage: 'IDLE' });
-    log('info', 'pipeline', 'Session started', {
-      source: params.sourceLanguage, target: params.targetLanguage,
-      voiceId: effectiveVoiceId, llmProvider, hasVoiceClone: !!voiceId,
-    });
+    log('info', 'pipeline', 'Session started', { source: params.sourceLanguage, target: params.targetLanguage });
   }
 
   /** Stop the current session — deterministic cleanup. */
@@ -170,7 +119,6 @@ export class PipelineOrchestrator {
     this.#sessionActive = false;
     log('info', 'pipeline', `Session stopping: ${reason}`);
     this.#transitionRouting({ type: 'session_stop' }); this.#clearAllTimers();
-    sendMessage('PIPELINE_STAGE_UPDATE', { stage: 'IDLE' });
     await this.#executeCleanup(); this.#emitSessionState();
   }
   /** Called by AudioCaptureModule when VAD detects speech end. */
@@ -183,9 +131,7 @@ export class PipelineOrchestrator {
     this.#latencyMonitor?.markCaptureEnd(seqId);
     this.#setStageTimeout(seqId, 'stt', this.#config.sttTimeoutMs);
     this.#enforceBackpressure(); this.#evictCompletedUtterances();
-    sendMessage('UTTERANCE_STATE_CHANGED', { sequenceId: seqId, state: 'CAPTURED' });
-    sendMessage('PIPELINE_STAGE_UPDATE', { stage: 'CAPTURED' });
-    this.#emitSessionState();
+    sendMessage('UTTERANCE_STATE_CHANGED', { sequenceId: seqId, state: 'CAPTURED' }); this.#emitSessionState();
   }
   /** Called by STTClient on final transcript. */
   handleFinalTranscript(sequenceId: number, text: string, language: string): void {
@@ -229,11 +175,6 @@ export class PipelineOrchestrator {
       this.#transitionUtterance(sequenceId, 'SYNTHESIZED');
     }
     utt.audioChunks.push(pcm.buffer as ArrayBuffer); this.#advancePlayback();
-
-    // Forward TTS PCM to content script via service worker relay
-    const pcmArray = Array.from(pcm);
-    sendMessage('TTS_AUDIO_TO_MEETING', { pcm: pcmArray, sequenceId });
-    log('info', 'pipeline', `TTS audio chunk sent to meeting (${pcm.length} samples, seq=${sequenceId})`);
   }
   /** Called by AudioOutputModule when playback finishes. */
   handlePlaybackEnd(sequenceId: number): void {
@@ -268,7 +209,6 @@ export class PipelineOrchestrator {
     if (!utt || !VALID_NEXT[utt.state]?.includes(to)) return;
     const from = utt.state; utt.state = to;
     sendMessage('UTTERANCE_STATE_CHANGED', { sequenceId, state: to });
-    sendMessage('PIPELINE_STAGE_UPDATE', { stage: to });
     log('info', 'pipeline', `Utterance ${sequenceId}: ${from}→${to}`);
   }
   #dropUtterance(sequenceId: number, reason: string): void {

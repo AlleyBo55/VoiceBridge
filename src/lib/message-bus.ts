@@ -31,8 +31,7 @@ export type MessageType =
   | 'AUDIO_ROUTING_STATE_CHANGED' | 'DEGRADATION_LEVEL_CHANGED' | 'UTTERANCE_STATE_CHANGED'
   | 'TRACK_INJECT' | 'TRACK_RESTORE' | 'TRACK_STATUS'
   | 'AUDIO_BRIDGE_READY' | 'AUDIO_BRIDGE_DISCONNECTED'
-  | 'DEMO_KEYS_POPULATED' | 'EMBEDDED_KEY_EXHAUSTED' | 'CLEANUP_COMPLETE'
-  | 'TTS_AUDIO_TO_MEETING' | 'PIPELINE_STAGE_UPDATE' | 'TRACK_STATUS_UPDATE';
+  | 'DEMO_KEYS_POPULATED' | 'EMBEDDED_KEY_EXHAUSTED' | 'CLEANUP_COMPLETE';
 
 export type ExtensionContext = 'service-worker' | 'offscreen' | 'content-script' | 'popup' | 'sidepanel';
 
@@ -102,9 +101,6 @@ export interface MessagePayloadMap {
   DEMO_KEYS_POPULATED: { provider: LLMProvider };
   EMBEDDED_KEY_EXHAUSTED: undefined;
   CLEANUP_COMPLETE: { errors: Array<{ name: string; message: string }> };
-  TTS_AUDIO_TO_MEETING: { pcm: number[]; sequenceId: number };
-  PIPELINE_STAGE_UPDATE: { stage: string };
-  TRACK_STATUS_UPDATE: { injected: boolean; platform: string };
 }
 
 export interface ExtensionMessage<T extends MessageType = MessageType> {
@@ -161,13 +157,9 @@ export function sendMessage<T extends MessageType>(
   };
 
   if (tabId !== undefined) {
-    chrome.tabs.sendMessage(tabId, message).catch(() => {
-      // Receiver not ready yet — safe to ignore
-    });
+    chrome.tabs.sendMessage(tabId, message);
   } else {
-    chrome.runtime.sendMessage(message).catch(() => {
-      // Receiver not ready yet — safe to ignore
-    });
+    chrome.runtime.sendMessage(message);
   }
 }
 
