@@ -100,15 +100,58 @@ Want unlimited? Paste your own API key. Hackathon attendees get the [ElevenLabs 
 
 ## Quick Start
 
-```
-1. Install the extension
-2. Record 30 seconds of your voice
-3. Pick your languages
-4. Join a meeting
-5. Toggle on. Speak.
+### 1. Clone and install
+
+```bash
+git clone https://github.com/AlleyBo55/VoiceBridge.git
+cd VoiceBridge
+npm install
 ```
 
-That's it. Five steps. You're multilingual.
+### 2. Set up your API keys
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env`:
+
+```env
+# ElevenLabs — get your key at https://elevenlabs.io/app/settings/api-keys
+VITE_DEMO_ELEVENLABS_KEY=xi-your-key-here
+
+# LLM for translation — pick one provider
+VITE_DEMO_LLM_PROVIDER=openrouter
+VITE_DEMO_LLM_KEY=sk-or-your-key-here
+VITE_DEMO_OPENROUTER_MODEL=openai/gpt-4o
+
+# Set true to remove voice-time limit
+VITE_DEMO_UNLIMITED=true
+```
+
+> Hackathon attendees: claim free ElevenLabs Creator plan at [hacks.elevenlabs.io/hackathons/4](https://hacks.elevenlabs.io/hackathons/4)
+
+### 3. Build
+
+```bash
+npm run build
+```
+
+### 4. Load in Chrome
+
+1. Go to `chrome://extensions/`
+2. Enable **Developer mode** (top-right toggle)
+3. Click **Load unpacked**
+4. Select the `dist/` folder
+
+### 5. Use it
+
+1. Complete the onboarding (record your voice, pick languages)
+2. Join a meeting (Google Meet, Teams, Discord, Zoom)
+3. Press `Alt+T` or click the VoiceBridge icon
+4. Speak — other participants hear your translated voice
+
+That's it. You're multilingual.
 
 → [Full setup guide](docs/GETTING-STARTED.md)
 
