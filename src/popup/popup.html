@@ -13,8 +13,8 @@
     .toggle-label { font-family: var(--font-mono); font-size: var(--label); letter-spacing: var(--ls-label); text-transform: uppercase; color: var(--text-secondary); }
     .language-section { margin-bottom: var(--space-md); }
     .language-row { display: flex; gap: var(--space-sm); align-items: center; margin-bottom: var(--space-sm); }
-    .language-row select { flex: 1; font-family: var(--font-mono); font-size: var(--body-sm); background: var(--surface); color: var(--text-primary); border: 1px solid var(--border-visible); border-radius: var(--radius-md); padding: var(--space-sm); min-height: 44px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
-    .arrow { font-family: var(--font-mono); color: var(--text-disabled); font-size: var(--body); flex-shrink: 0; }
+    .language-row select { flex: 1; font-family: var(--font-mono); font-size: var(--body-sm); background: var(--surface); color: var(--text-primary); border: 1px solid var(--border-visible); border-radius: var(--radius-md); padding: var(--space-sm) var(--space-md); min-height: 44px; }
+    .arrow { font-family: var(--font-mono); color: var(--text-disabled); font-size: var(--body); }
     .status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-sm); margin-bottom: var(--space-md); }
     .status-item { padding: var(--space-sm); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); }
     .status-label { font-family: var(--font-mono); font-size: var(--label); letter-spacing: var(--ls-label); text-transform: uppercase; color: var(--text-secondary); margin-bottom: var(--space-xs); }
@@ -46,9 +46,11 @@
   <div class="language-section">
     <div class="language-row">
       <select id="sourceLanguage" aria-label="Source language">
+        <option value="auto">Auto-detect</option>
       </select>
       <span class="arrow">→</span>
       <select id="targetLanguage" aria-label="Target language">
+        <option value="es">Spanish</option>
       </select>
     </div>
   </div>
@@ -65,9 +67,9 @@
     <div class="status-item">
       <div class="status-label">Connections</div>
       <div class="connection-dots">
-        <span class="dot" id="sttDot" title="STT"></span><span style="font-family:var(--font-mono);font-size:9px;color:var(--text-disabled)">STT</span>
-        <span class="dot" id="ttsDot" title="TTS"></span><span style="font-family:var(--font-mono);font-size:9px;color:var(--text-disabled)">TTS</span>
-        <span class="dot" id="llmDot" title="LLM"></span><span style="font-family:var(--font-mono);font-size:9px;color:var(--text-disabled)">LLM</span>
+        <span class="dot" id="sttDot" title="STT"></span>
+        <span class="dot" id="ttsDot" title="TTS"></span>
+        <span class="dot" id="llmDot" title="LLM"></span>
       </div>
     </div>
     <div class="status-item">
@@ -79,17 +81,6 @@
   <div class="voice-time" id="voiceTimeSection">
     <span class="label">Voice Time</span>
     <span class="status-value mono" id="voiceTimeRemaining">5:00 LEFT</span>
-  </div>
-
-  <div class="status-grid" style="margin-bottom: var(--space-md);">
-    <div class="status-item">
-      <div class="status-label">Pipeline</div>
-      <div class="status-value" id="pipelineStage">[IDLE]</div>
-    </div>
-    <div class="status-item">
-      <div class="status-label">Track</div>
-      <div class="status-value" id="trackStatus">[NOT INJECTED]</div>
-    </div>
   </div>
 
   <div class="features">

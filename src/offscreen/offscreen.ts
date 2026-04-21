@@ -1,130 +1,266 @@
 /**
  * Offscreen document — persistent pipeline host.
- * Delegates all pipeline complexity to PipelineOrchestrator.
- * Manages AudioBridgeSender for zero-copy audio transfer to content script.
+ * Manages WebSocket connections, audio processing, and the full translation pipeline.
+ * This context survives service worker termination.
  */
 
 import { initMessageBus, sendMessage, onMessage } from '../lib/message-bus.js';
-import { PipelineOrchestrator } from '../lib/pipeline-orchestrator.js';
-import { AudioBridgeSender } from '../lib/audio-bridge.js';
+import { getSetting } from '../lib/settings-store.js';
+import { AudioCaptureModule } from '../lib/audio-capture.js';
+import { STTClient } from '../lib/stt-client.js';
+import { TranslationEngine } from '../lib/translation-engine.js';
+import { TTSClient } from '../lib/tts-client.js';
+import { AudioOutputModule } from '../lib/audio-output.js';
+import { EchoCancellationModule } from '../lib/echo-cancellation.js';
+import { LatencyMonitor } from '../lib/latency-monitor.js';
 import { log } from '../lib/debug-log.js';
 
-// ── Pipeline ────────────────────────────────────────────────
+// ── Pipeline Components ─────────────────────────────────────
 
-const orchestrator = new PipelineOrchestrator();
-const audioBridgeSender = new AudioBridgeSender();
-
-// Demo limit config from build env
-const DEMO_UNLIMITED = import.meta.env.VITE_DEMO_UNLIMITED === 'true';
-const DEMO_VOICE_LIMIT_MS = Number(import.meta.env.VITE_DEMO_VOICE_LIMIT_SECONDS ?? '300') * 1000;
+let audioCapture: AudioCaptureModule | null = null;
+let sttClient: STTClient | null = null;
+let translationEngine: TranslationEngine | null = null;
+let ttsClient: TTSClient | null = null;
+let audioOutput: AudioOutputModule | null = null;
+let echoCancellation: EchoCancellationModule | null = null;
+let latencyMonitor: LatencyMonitor | null = null;
 
 let voiceTimeAccumulator = 0;
 let voiceTimeStart = 0;
 let isSpeaking = false;
 
+// Demo limit config from build env
+const DEMO_UNLIMITED = import.meta.env.VITE_DEMO_UNLIMITED === 'true';
+const DEMO_VOICE_LIMIT_MS = Number(import.meta.env.VITE_DEMO_VOICE_LIMIT_SECONDS ?? '300') * 1000;
+
 // ── Initialize ──────────────────────────────────────────────
 
-function init(): void {
+async function init(): Promise<void> {
   initMessageBus();
   log('info', 'pipeline', 'Offscreen document initialized');
-  console.log('[VB:offscreen] Offscreen document initialized');
 
   onMessage('SESSION_START', handleSessionStart);
   onMessage('SESSION_STOP', handleSessionStop);
-
   onMessage('LANGUAGE_CHANGED', ({ sourceLanguage, targetLanguage }) => {
-    log('info', 'pipeline', 'Language changed', { sourceLanguage, targetLanguage });
+    translationEngine?.setLanguagePair(sourceLanguage, targetLanguage);
   });
-
   onMessage('GHOST_MODE_TOGGLE', ({ enabled }) => {
-    log('info', 'pipeline', `Ghost mode ${enabled ? 'enabled' : 'disabled'}`);
-  });
-
-  // Voice time tracking via VAD state from AUDIO_LEVEL messages
-  onMessage('AUDIO_LEVEL', ({ vadState }) => {
-    trackVoiceTime(vadState);
-  });
-
-  // Listen for MessagePort from service worker (AudioBridge)
-  // The service worker posts the port via navigator.serviceWorker.controller
-  navigator.serviceWorker?.addEventListener('message', (event: MessageEvent) => {
-    const data = event.data as { type?: string } | undefined;
-    if (data?.type === 'AUDIO_BRIDGE_PORT' && event.ports[0]) {
-      audioBridgeSender.attachPort(event.ports[0]);
-      log('info', 'pipeline', 'AudioBridge sender port attached');
-    }
-  });
-
-  // Handle beforeunload — trigger cleanup
-  window.addEventListener('beforeunload', () => {
-    log('info', 'pipeline', 'Offscreen document unloading — cleaning up');
-    void orchestrator.stopSession('offscreen-unload');
-    audioBridgeSender.close();
+    audioCapture?.setGhostMode(enabled);
+    echoCancellation?.setGhostMode(enabled);
   });
 }
 
 // ── Session Lifecycle ───────────────────────────────────────
 
-async function handleSessionStart(
-  payload: { sourceLanguage: string; targetLanguage: string },
-): Promise<void> {
-  log('info', 'pipeline', 'Starting session via orchestrator', payload);
-  console.log('[VB:offscreen] Starting session', payload);
+async function handleSessionStart(payload: { sourceLanguage: string; targetLanguage: string }): Promise<void> {
+  log('info', 'pipeline', 'Starting session', payload);
+
+  const apiKey = await getSetting('elevenLabsApiKey');
+  const llmApiKey = await getSetting('llmApiKey');
+  const llmProvider = await getSetting('llmProvider');
+  const voiceId = await getSetting('voiceProfileId');
+
+  // Initialize latency monitor
+  latencyMonitor = new LatencyMonitor();
+  latencyMonitor.onLatencyUpdate = (measurement) => {
+    sendMessage('LATENCY_UPDATE', measurement);
+  };
+
+  // Initialize audio output
+  audioOutput = new AudioOutputModule();
+  await audioOutput.initialize();
+
+  // Initialize echo cancellation
+  echoCancellation = new EchoCancellationModule({
+    onMuteMic: () => audioCapture?.mute(),
+    onUnmuteMic: () => audioCapture?.unmute(),
+    onStopTTS: () => ttsClient?.cancel(),
+    onFadeOutTTS: (ms) => audioOutput?.fadeOut(ms),
+    onStateChange: (state) => sendMessage('ECHO_STATE_CHANGED', { state }),
+  });
+
+  // Initialize STT client
+  sttClient = new STTClient(apiKey);
+  sttClient.onPartialTranscript = (transcript) => {
+    sendMessage('STT_TRANSCRIPT_PARTIAL', {
+      text: transcript.text,
+      language: transcript.language,
+      sequenceId: transcript.sequenceId,
+    });
+  };
+  sttClient.onFinalTranscript = async (transcript) => {
+    latencyMonitor?.markSTTEnd(transcript.sequenceId);
+    sendMessage('STT_TRANSCRIPT_FINAL', {
+      text: transcript.text,
+      language: transcript.language,
+      sequenceId: transcript.sequenceId,
+    });
+
+    // Forward to translation
+    if (translationEngine) {
+      latencyMonitor?.markTranslationStart(transcript.sequenceId);
+      let firstToken = true;
+      const tokens: string[] = [];
+
+      for await (const token of translationEngine.translate(transcript)) {
+        if (firstToken) {
+          latencyMonitor?.markTranslationFirstToken(transcript.sequenceId);
+          firstToken = false;
+        }
+        tokens.push(token);
+        ttsClient?.sendText(token);
+        sendMessage('TRANSLATION_PARTIAL', { text: tokens.join(''), sequenceId: transcript.sequenceId });
+      }
+
+      ttsClient?.flush();
+      sendMessage('TRANSLATION_FINAL', { text: tokens.join(''), sequenceId: transcript.sequenceId });
+    }
+  };
+  sttClient.onConnectionStateChange = (state) => {
+    sendMessage('CONNECTION_STATE_CHANGED', { service: 'stt', state });
+  };
+
+  await sttClient.connect({
+    encoding: 'pcm_16000',
+    languageCode: payload.sourceLanguage,
+    model: 'scribe_v1',
+  });
+
+  const openRouterModel = await getSetting('openRouterModel');
+
+  // Initialize translation engine
+  translationEngine = new TranslationEngine({
+    provider: llmProvider,
+    apiKey: llmApiKey,
+    openRouterModel,
+    sourceLanguage: payload.sourceLanguage,
+    targetLanguage: payload.targetLanguage,
+  });
+
+  // Initialize TTS client
+  ttsClient = new TTSClient();
+  ttsClient.onAudioChunk = (pcm, sequenceId) => {
+    latencyMonitor?.markTTSFirstByte(sequenceId);
+    echoCancellation?.handleEvent({ type: 'tts_start' });
+    audioOutput?.playAudio(pcm, sequenceId);
+    latencyMonitor?.markPlaybackStart(sequenceId);
+  };
+  ttsClient.onPlaybackEnd = () => {
+    echoCancellation?.handleEvent({ type: 'tts_end' });
+  };
+  ttsClient.onConnectionStateChange = (state) => {
+    sendMessage('CONNECTION_STATE_CHANGED', { service: 'tts', state });
+  };
+
+  if (voiceId) {
+    await ttsClient.connect({
+      voiceId,
+      modelId: 'eleven_multilingual_v2',
+      outputFormat: 'pcm_24000',
+      voiceSettings: {
+        stability: await getSetting('voiceStability'),
+        similarityBoost: await getSetting('voiceSimilarityBoost'),
+        style: await getSetting('voiceStyle'),
+        useSpeakerBoost: true,
+      },
+      apiKey,
+    });
+  }
+
+  // Initialize audio capture
+  audioCapture = new AudioCaptureModule();
+  audioCapture.onAudioChunk = (chunk, sequenceId) => {
+    latencyMonitor?.markCaptureStart(sequenceId);
+    sttClient?.sendAudio(chunk);
+    sttClient?.setSequenceId(sequenceId);
+    latencyMonitor?.markCaptureEnd(sequenceId);
+  };
+  audioCapture.onVADStateChange = (state) => {
+    sendMessage('AUDIO_LEVEL', { rmsDb: audioCapture?.getCurrentLevel() ?? -Infinity, vadState: state.status });
+
+    // Track voice time for demo quota
+    if (state.status === 'speech' && !isSpeaking) {
+      isSpeaking = true;
+      voiceTimeStart = Date.now();
+    } else if (state.status === 'silence' && isSpeaking) {
+      isSpeaking = false;
+      voiceTimeAccumulator += Date.now() - voiceTimeStart;
+      sendMessage('DEMO_TIME_UPDATE', {
+        voiceTimeUsedMs: voiceTimeAccumulator,
+        voiceTimeRemainingMs: DEMO_UNLIMITED ? Infinity : Math.max(0, DEMO_VOICE_LIMIT_MS - voiceTimeAccumulator),
+      });
+
+      if (!DEMO_UNLIMITED && voiceTimeAccumulator >= DEMO_VOICE_LIMIT_MS) {
+        sendMessage('DEMO_LIMIT_REACHED', { resetsAt: Date.now() + 86400000 });
+        handleSessionStop({ reason: 'demo-limit' });
+      }
+    }
+  };
+  audioCapture.onSpeechEnd = () => {
+    sttClient?.commit();
+  };
+
+  await audioCapture.start();
+
+  sendMessage('SESSION_STATE_CHANGED', {
+    active: true,
+    startedAt: Date.now(),
+    sourceLanguage: payload.sourceLanguage,
+    targetLanguage: payload.targetLanguage,
+    totalUtterances: 0,
+    droppedUtterances: 0,
+    currentSequenceId: 0,
+    voiceTimeMs: 0,
+    ttsCharactersUsed: 0,
+    sttSecondsUsed: 0,
+    llmTokensUsed: 0,
+  });
+
+  log('info', 'pipeline', 'Session started');
+}
+
+async function handleSessionStop(_payload: { reason: string }): Promise<void> {
+  log('info', 'pipeline', 'Stopping session', _payload);
+
+  await audioCapture?.stop();
+  audioCapture = null;
+
+  await sttClient?.disconnect();
+  sttClient = null;
+
+  translationEngine?.destroy();
+  translationEngine = null;
+
+  await ttsClient?.disconnect();
+  ttsClient = null;
+
+  await audioOutput?.destroy();
+  audioOutput = null;
+
+  echoCancellation?.destroy();
+  echoCancellation = null;
+
+  latencyMonitor?.clear();
+  latencyMonitor = null;
 
   voiceTimeAccumulator = 0;
-  voiceTimeStart = 0;
   isSpeaking = false;
 
-  try {
-    await orchestrator.startSession(payload);
-    log('info', 'pipeline', 'Session started successfully');
-    console.log('[VB:offscreen] Session started successfully');
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    log('error', 'pipeline', `Session start failed: ${message}`);
-    sendMessage('ERROR', {
-      code: 'session-start-failed',
-      message,
-      userMessage: `Failed to start translation: ${message}`,
-    });
-  }
-}
+  sendMessage('SESSION_STATE_CHANGED', {
+    active: false,
+    startedAt: 0,
+    sourceLanguage: '',
+    targetLanguage: '',
+    totalUtterances: 0,
+    droppedUtterances: 0,
+    currentSequenceId: 0,
+    voiceTimeMs: 0,
+    ttsCharactersUsed: 0,
+    sttSecondsUsed: 0,
+    llmTokensUsed: 0,
+  });
 
-async function handleSessionStop(payload: { reason: string }): Promise<void> {
-  log('info', 'pipeline', 'Stopping session via orchestrator', payload);
-  console.log('[VB:offscreen] Stopping session', payload);
-
-  if (isSpeaking) {
-    voiceTimeAccumulator += Date.now() - voiceTimeStart;
-    isSpeaking = false;
-  }
-
-  await orchestrator.stopSession(payload.reason);
-  audioBridgeSender.close();
-}
-
-// ── Voice Time Tracking (Demo Quota) ────────────────────────
-
-function trackVoiceTime(vadState: string): void {
-  if (vadState === 'speech' && !isSpeaking) {
-    isSpeaking = true;
-    voiceTimeStart = Date.now();
-  } else if (vadState === 'silence' && isSpeaking) {
-    isSpeaking = false;
-    voiceTimeAccumulator += Date.now() - voiceTimeStart;
-
-    sendMessage('DEMO_TIME_UPDATE', {
-      voiceTimeUsedMs: voiceTimeAccumulator,
-      voiceTimeRemainingMs: DEMO_UNLIMITED
-        ? Infinity
-        : Math.max(0, DEMO_VOICE_LIMIT_MS - voiceTimeAccumulator),
-    });
-
-    if (!DEMO_UNLIMITED && voiceTimeAccumulator >= DEMO_VOICE_LIMIT_MS) {
-      sendMessage('DEMO_LIMIT_REACHED', { resetsAt: Date.now() + 86400000 });
-      void handleSessionStop({ reason: 'demo-limit' });
-    }
-  }
+  log('info', 'pipeline', 'Session stopped');
 }
 
 // ── Boot ────────────────────────────────────────────────────
