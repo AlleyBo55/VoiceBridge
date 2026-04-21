@@ -133,6 +133,11 @@ function setupMessageHandlers(): void {
   });
 
   onMessage('DEMO_TIME_UPDATE', ({ voiceTimeRemainingMs }) => {
+    if (voiceTimeRemainingMs === Infinity) {
+      voiceTimeEl.textContent = 'UNLIMITED';
+      voiceTimeEl.style.color = 'var(--success)';
+      return;
+    }
     const seconds = Math.ceil(voiceTimeRemainingMs / 1000);
     const min = Math.floor(seconds / 60);
     const sec = seconds % 60;

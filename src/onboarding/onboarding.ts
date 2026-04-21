@@ -1,9 +1,20 @@
 /**
  * Onboarding wizard — 5-step first-time setup.
  * Welcome → API Keys → Voice Recording → Language Selection → Test & Confirm
+ *
+ * If demo keys are embedded via .env, the API Keys step is auto-skipped.
  */
 
-import { setSetting } from '../lib/settings-store.js';
+import { setSetting, getSetting } from '../lib/settings-store.js';
+import type { LLMProvider } from '../lib/types.js';
+
+// ── Embedded Demo Keys (from .env at build time) ────────────
+
+const DEMO_ELEVENLABS_KEY = import.meta.env.VITE_DEMO_ELEVENLABS_KEY ?? '';
+const DEMO_LLM_KEY = import.meta.env.VITE_DEMO_LLM_KEY ?? '';
+const DEMO_LLM_PROVIDER = (import.meta.env.VITE_DEMO_LLM_PROVIDER ?? 'openrouter') as LLMProvider;
+const DEMO_OPENROUTER_MODEL = import.meta.env.VITE_DEMO_OPENROUTER_MODEL ?? 'openai/gpt-4o';
+const HAS_DEMO_KEYS = DEMO_ELEVENLABS_KEY.length > 0;
 
 // ── State ───────────────────────────────────────────────────
 
@@ -26,7 +37,6 @@ function goToStep(index: number): void {
   currentStep = index;
   getStep(currentStep).classList.add('active');
 
-  // Update step indicator
   getStepDots().forEach((dot, i) => {
     dot.className = 'step-dot';
     if (i < currentStep) dot.classList.add('done');
@@ -36,9 +46,28 @@ function goToStep(index: number): void {
 
 // ── Initialize ──────────────────────────────────────────────
 
-function init(): void {
-  // Step 0 → 1
-  document.getElementById('nextBtn0')!.addEventListener('click', () => goToStep(1));
+async function init(): Promise<void> {
+  // If demo keys are embedded, save them to storage and skip the API key step
+  if (HAS_DEMO_KEYS) {
+    const existingKey = await getSetting('elevenLabsApiKey');
+    if (!existingKey) {
+      await setSetting('elevenLabsApiKey', DEMO_ELEVENLABS_KEY);
+      if (DEMO_LLM_KEY) await setSetting('llmApiKey', DEMO_LLM_KEY);
+      await setSetting('llmProvider', DEMO_LLM_PROVIDER);
+      if (DEMO_LLM_PROVIDER === 'openrouter') {
+        await setSetting('openRouterModel', DEMO_OPENROUTER_MODEL);
+      }
+    }
+  }
+
+  // Step 0: Welcome → skip to step 2 (voice recording) if demo keys present
+  document.getElementById('nextBtn0')!.addEventListener('click', () => {
+    if (HAS_DEMO_KEYS) {
+      goToStep(2); // Skip API keys step
+    } else {
+      goToStep(1);
+    }
+  });
 
   // Step 1: API Keys
   document.getElementById('backBtn1')!.addEventListener('click', () => goToStep(0));
@@ -53,7 +82,6 @@ function init(): void {
       return;
     }
 
-    // Validate ElevenLabs key
     try {
       const res = await fetch('https://api.elevenlabs.io/v1/user', {
         headers: { 'xi-api-key': elKey },
@@ -78,7 +106,9 @@ function init(): void {
   });
 
   // Step 2: Voice Recording
-  document.getElementById('backBtn2')!.addEventListener('click', () => goToStep(1));
+  document.getElementById('backBtn2')!.addEventListener('click', () => {
+    goToStep(HAS_DEMO_KEYS ? 0 : 1);
+  });
   let mediaRecorder: MediaRecorder | null = null;
   let recordedChunks: Blob[] = [];
 
@@ -104,10 +134,9 @@ function init(): void {
       for (const track of stream.getTracks()) track.stop();
       const blob = new Blob(recordedChunks, { type: 'audio/webm' });
 
-      // Upload to ElevenLabs
       timer.textContent = '[UPLOADING...]';
       try {
-        const apiKey = await import('../lib/settings-store.js').then(m => m.getSetting('elevenLabsApiKey'));
+        const apiKey = await getSetting('elevenLabsApiKey');
         const formData = new FormData();
         formData.append('files', blob, 'voice-sample.webm');
         formData.append('name', `VoiceBridge-${crypto.randomUUID().slice(0, 8)}`);
@@ -135,7 +164,6 @@ function init(): void {
     mediaRecorder.start(1000);
     btn.textContent = 'Stop Recording';
 
-    // Countdown
     let remaining = 30;
     const interval = setInterval(() => {
       remaining--;
@@ -162,7 +190,6 @@ function init(): void {
   document.getElementById('testBtn')!.addEventListener('click', () => {
     const status = document.getElementById('testStatus')!;
     status.textContent = '[TESTING PIPELINE...]';
-    // In a real implementation, this would run the full pipeline test
     setTimeout(() => {
       status.textContent = '[TEST COMPLETE]';
       status.className = 'status-inline success';

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head><title>Generate VoiceBridge Icons</title></head>
+<body>
+<p>Open this file in a browser, right-click each canvas, and "Save image as" to get the PNGs.</p>
+<div>
+  <h3>128×128</h3>
+  <canvas id="c128" width="128" height="128"></canvas>
+</div>
+<div>
+  <h3>48×48</h3>
+  <canvas id="c48" width="48" height="48"></canvas>
+</div>
+<div>
+  <h3>16×16</h3>
+  <canvas id="c16" width="16" height="16"></canvas>
+</div>
+<script>
+const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+  <circle cx="64" cy="64" r="64" fill="#000000"/>
+  <circle cx="64" cy="64" r="60" stroke="#333333" stroke-width="1" fill="none"/>
+  <rect x="52" y="28" width="24" height="40" rx="12" stroke="#E8E8E8" stroke-width="3" fill="none"/>
+  <path d="M40 58 a24 24 0 0 0 48 0" stroke="#E8E8E8" stroke-width="3" fill="none" stroke-linecap="round"/>
+  <line x1="64" y1="82" x2="64" y2="90" stroke="#E8E8E8" stroke-width="3" stroke-linecap="round"/>
+  <path d="M44 92 Q64 106 84 92" stroke="#999999" stroke-width="2" fill="none" stroke-linecap="round"/>
+  <path d="M50 98 Q64 108 78 98" stroke="#666666" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+  <circle cx="88" cy="32" r="5" fill="#D71921"/>
+</svg>`;
+
+const blob = new Blob([svg], { type: 'image/svg+xml' });
+const url = URL.createObjectURL(blob);
+const img = new Image();
+img.onload = () => {
+  [128, 48, 16].forEach(size => {
+    const canvas = document.getElementById('c' + size);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, size, size);
+  });
+  URL.revokeObjectURL(url);
+};
+img.src = url;
+</script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+  <!-- Background circle — OLED black -->
+  <circle cx="64" cy="64" r="64" fill="#000000"/>
+  
+  <!-- Outer ring — subtle border -->
+  <circle cx="64" cy="64" r="60" stroke="#333333" stroke-width="1" fill="none"/>
+  
+  <!-- Microphone body — monoline, Nothing style -->
+  <rect x="52" y="28" width="24" height="40" rx="12" stroke="#E8E8E8" stroke-width="3" fill="none"/>
+  
+  <!-- Microphone stand arc -->
+  <path d="M40 58 a24 24 0 0 0 48 0" stroke="#E8E8E8" stroke-width="3" fill="none" stroke-linecap="round"/>
+  
+  <!-- Microphone stem -->
+  <line x1="64" y1="82" x2="64" y2="90" stroke="#E8E8E8" stroke-width="3" stroke-linecap="round"/>
+  
+  <!-- Globe arc lines — translation/language indicator -->
+  <path d="M44 92 Q64 106 84 92" stroke="#999999" stroke-width="2" fill="none" stroke-linecap="round"/>
+  <path d="M50 98 Q64 108 78 98" stroke="#666666" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+  
+  <!-- Accent dot — Nothing red, recording indicator -->
+  <circle cx="88" cy="32" r="5" fill="#D71921"/>
+</svg>
