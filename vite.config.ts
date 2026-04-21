@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import { resolve } from 'path';
 import { copyFileSync, mkdirSync, readdirSync } from 'fs';
 
@@ -50,8 +50,11 @@ function copyExtensionAssets() {
   };
 }
 
-export default defineConfig({
-  build: {
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, __dirname, 'VITE_');
+
+  return {
+    build: {
     outDir: 'dist',
     emptyOutDir: true,
     rollupOptions: {
@@ -84,13 +87,14 @@ export default defineConfig({
     },
   },
   define: {
-    'import.meta.env.VITE_DEMO_KEY_ENABLED': JSON.stringify(process.env.VITE_DEMO_KEY_ENABLED ?? 'false'),
-    'import.meta.env.VITE_DEMO_ELEVENLABS_KEY': JSON.stringify(process.env.VITE_DEMO_ELEVENLABS_KEY ?? ''),
-    'import.meta.env.VITE_DEMO_LLM_PROVIDER': JSON.stringify(process.env.VITE_DEMO_LLM_PROVIDER ?? 'openrouter'),
-    'import.meta.env.VITE_DEMO_LLM_KEY': JSON.stringify(process.env.VITE_DEMO_LLM_KEY ?? ''),
-    'import.meta.env.VITE_DEMO_OPENROUTER_MODEL': JSON.stringify(process.env.VITE_DEMO_OPENROUTER_MODEL ?? 'openai/gpt-4o'),
-    'import.meta.env.VITE_DEMO_UNLIMITED': JSON.stringify(process.env.VITE_DEMO_UNLIMITED ?? 'false'),
-    'import.meta.env.VITE_DEMO_VOICE_LIMIT_SECONDS': JSON.stringify(process.env.VITE_DEMO_VOICE_LIMIT_SECONDS ?? '300'),
-    'import.meta.env.VITE_VERSION': JSON.stringify(process.env.VITE_VERSION ?? '1.0.0'),
+    'import.meta.env.VITE_DEMO_KEY_ENABLED': JSON.stringify(env['VITE_DEMO_KEY_ENABLED'] ?? 'false'),
+    'import.meta.env.VITE_DEMO_ELEVENLABS_KEY': JSON.stringify(env['VITE_DEMO_ELEVENLABS_KEY'] ?? ''),
+    'import.meta.env.VITE_DEMO_LLM_PROVIDER': JSON.stringify(env['VITE_DEMO_LLM_PROVIDER'] ?? 'openrouter'),
+    'import.meta.env.VITE_DEMO_LLM_KEY': JSON.stringify(env['VITE_DEMO_LLM_KEY'] ?? ''),
+    'import.meta.env.VITE_DEMO_OPENROUTER_MODEL': JSON.stringify(env['VITE_DEMO_OPENROUTER_MODEL'] ?? 'openai/gpt-4o'),
+    'import.meta.env.VITE_DEMO_UNLIMITED': JSON.stringify(env['VITE_DEMO_UNLIMITED'] ?? 'false'),
+    'import.meta.env.VITE_DEMO_VOICE_LIMIT_SECONDS': JSON.stringify(env['VITE_DEMO_VOICE_LIMIT_SECONDS'] ?? '300'),
+    'import.meta.env.VITE_VERSION': JSON.stringify(env['VITE_VERSION'] ?? '1.0.0'),
   },
+};
 });
