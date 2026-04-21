@@ -122,9 +122,10 @@ export class ContextWindow {
 const CLAUSE_BOUNDARY_REGEX = /[,;]\s+|\s+(?:and|or|but|because|although|however|therefore|meanwhile)\s+/i;
 
 /**
- * Split long sentences (>50 words) at natural clause boundaries.
+ * Split long sentences at natural clause boundaries for faster TTS output.
+ * Default threshold: 15 words — aggressive chunking for lower latency.
  */
-export function splitLongSentence(text: string, maxWords: number = 50): string[] {
+export function splitLongSentence(text: string, maxWords: number = 15): string[] {
   const words = text.split(/\s+/);
   if (words.length <= maxWords) return [text];
 
@@ -236,6 +237,15 @@ export class TranslationEngine {
   }
 
   async *#performTranslation(text: string): AsyncGenerator<string> {
+    // Split long text into clauses for faster time-to-first-audio
+    const chunks = splitLongSentence(text);
+
+    for (const chunk of chunks) {
+      yield* this.#translateChunk(chunk);
+    }
+  }
+
+  async *#translateChunk(text: string): AsyncGenerator<string> {
     // Apply preservation markers
     const { markedText, markers } = addPreservationMarkers(text);
 
