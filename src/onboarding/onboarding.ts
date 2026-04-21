@@ -6,6 +6,7 @@
  */
 
 import { setSetting, getSetting } from '../lib/settings-store.js';
+import { populateLanguageSelect } from '../lib/languages.js';
 import type { LLMProvider } from '../lib/types.js';
 
 // ── Embedded Demo Keys (from .env at build time) ────────────
@@ -59,6 +60,16 @@ async function init(): Promise<void> {
       }
     }
   }
+
+  // Populate language dropdowns with all ElevenLabs supported languages
+  populateLanguageSelect(
+    document.getElementById('obSourceLang') as HTMLSelectElement,
+    { selectedCode: 'en' }
+  );
+  populateLanguageSelect(
+    document.getElementById('obTargetLang') as HTMLSelectElement,
+    { selectedCode: 'es' }
+  );
 
   // Step 0: Welcome → skip to step 2 (voice recording) if demo keys present
   document.getElementById('nextBtn0')!.addEventListener('click', () => {
