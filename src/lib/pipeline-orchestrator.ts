@@ -101,7 +101,7 @@ export class PipelineOrchestrator {
       onStateChange: () => { /* tracked via routing */ },
     });
     await this.#audioOutput.initialize(); await this.#audioCapture.start();
-    await this.#sttClient.connect({ encoding: 'pcm_16000', languageCode: params.sourceLanguage, model: 'scribe_v1' });
+    await this.#sttClient.connect({ encoding: 'pcm_16000', languageCode: params.sourceLanguage, model: 'scribe_v2_realtime' });
     this.#audioCapture.onSpeechEnd = () => this.handleSpeechEnd();
     this.#audioCapture.onAudioChunk = (chunk) => this.#sttClient?.sendAudio(chunk);
     this.#sttClient.onFinalTranscript = (t) => this.handleFinalTranscript(t.sequenceId, t.text, t.language);

@@ -1,6 +1,8 @@
 /**
  * ElevenLabs streaming TTS WebSocket client.
- * Manages connection, text streaming, audio reception, and voice settings.
+ * Uses eleven_flash_v2_5 for lowest latency (~75ms).
+ * Includes chunk_length_schedule for faster first-byte.
+ * Audited against ElevenLabs steering docs (April 2026).
  */
 
 import type { ServiceConnectionState, VoiceSettings } from './types.js';
@@ -10,6 +12,13 @@ import { calculateBackoff } from './stt-client.js';
 
 const HEARTBEAT_INTERVAL_MS = 15000;
 const MAX_RECONNECT_ATTEMPTS = 5;
+
+/**
+ * chunk_length_schedule: character thresholds before audio generation starts.
+ * Lower values = lower latency to first audio byte.
+ * [50, 120, 200, 260] is aggressive for real-time translation.
+ */
+const CHUNK_LENGTH_SCHEDULE = [50, 120, 200, 260];
 
 // ── Types ───────────────────────────────────────────────────
 
@@ -21,7 +30,7 @@ export type TTSConnectionState =
 
 export interface TTSConfig {
   voiceId: string;
-  modelId: 'eleven_multilingual_v2';
+  modelId: 'eleven_flash_v2_5' | 'eleven_multilingual_v2';
   outputFormat: 'pcm_24000';
   voiceSettings: VoiceSettings;
   apiKey: string;
@@ -58,6 +67,10 @@ export class TTSClient {
     this.#pendingText = [];
 
     if (this.#ws) {
+      // Send empty text to close the stream gracefully
+      if (this.#ws.readyState === WebSocket.OPEN) {
+        this.#ws.send(JSON.stringify({ text: '' }));
+      }
       this.#ws.close();
       this.#ws = null;
     }
@@ -67,20 +80,19 @@ export class TTSClient {
 
   /**
    * Send a text token to the TTS service for synthesis.
+   * Tokens stream incrementally from the LLM translation.
    */
   sendText(text: string): void {
     if (this.#ws?.readyState === WebSocket.OPEN) {
-      this.#ws.send(JSON.stringify({
-        text,
-        try_trigger_generation: true,
-      }));
+      this.#ws.send(JSON.stringify({ text }));
     } else {
       this.#pendingText.push(text);
     }
   }
 
   /**
-   * Signal end of utterance — flush any buffered audio.
+   * Signal end of utterance — forces immediate audio generation
+   * for any buffered text that hasn't hit the chunk_length_schedule threshold.
    */
   flush(): void {
     if (this.#ws?.readyState === WebSocket.OPEN) {
@@ -90,6 +102,7 @@ export class TTSClient {
 
   /**
    * Cancel current generation (barge-in).
+   * Flushes remaining text and discards pending queue.
    */
   cancel(): void {
     this.flush();
@@ -117,13 +130,12 @@ export class TTSClient {
     try {
       const ws = new WebSocket(url);
       this.#ws = ws;
-
       ws.binaryType = 'arraybuffer';
 
       ws.onopen = () => {
         this.#reconnectAttempt = 0;
 
-        // Send initial config
+        // Initialization message with chunk_length_schedule for low latency
         ws.send(JSON.stringify({
           text: ' ',
           voice_settings: {
@@ -131,6 +143,9 @@ export class TTSClient {
             similarity_boost: this.#config!.voiceSettings.similarityBoost,
             style: this.#config!.voiceSettings.style,
             use_speaker_boost: this.#config!.voiceSettings.useSpeakerBoost,
+          },
+          generation_config: {
+            chunk_length_schedule: CHUNK_LENGTH_SCHEDULE,
           },
           xi_api_key: apiKey,
           output_format: this.#config!.outputFormat,
@@ -141,17 +156,9 @@ export class TTSClient {
         this.#flushPendingText();
       };
 
-      ws.onmessage = (event: MessageEvent) => {
-        this.#handleMessage(event);
-      };
-
-      ws.onerror = () => {
-        this.#handleDisconnect();
-      };
-
-      ws.onclose = () => {
-        this.#handleDisconnect();
-      };
+      ws.onmessage = (event: MessageEvent) => { this.#handleMessage(event); };
+      ws.onerror = () => { this.#handleDisconnect(); };
+      ws.onclose = () => { this.#handleDisconnect(); };
     } catch (error) {
       this.#setState({
         status: 'error',
@@ -170,7 +177,7 @@ export class TTSClient {
       return;
     }
 
-    // JSON message
+    // JSON message (base64 audio or isFinal)
     try {
       const msg = JSON.parse(event.data as string) as {
         audio?: string;
@@ -178,7 +185,6 @@ export class TTSClient {
       };
 
       if (msg.audio) {
-        // Base64 encoded audio
         const binary = atob(msg.audio);
         const bytes = new Uint8Array(binary.length);
         for (let i = 0; i < binary.length; i++) {
@@ -214,10 +220,7 @@ export class TTSClient {
 
     const delay = calculateBackoff(this.#reconnectAttempt);
     this.#reconnectAttempt++;
-
-    this.#reconnectTimer = setTimeout(() => {
-      this.#createConnection();
-    }, delay);
+    this.#reconnectTimer = setTimeout(() => { this.#createConnection(); }, delay);
   }
 
   #flushPendingText(): void {
@@ -230,24 +233,15 @@ export class TTSClient {
   #startHeartbeat(): void {
     this.#heartbeatTimer = setInterval(() => {
       if (this.#ws?.readyState === WebSocket.OPEN) {
-        try {
-          this.#ws.send(new Uint8Array(0));
-        } catch {
-          this.#handleDisconnect();
-        }
+        try { this.#ws.send(new Uint8Array(0)); }
+        catch { this.#handleDisconnect(); }
       }
     }, HEARTBEAT_INTERVAL_MS);
   }
 
   #clearTimers(): void {
-    if (this.#heartbeatTimer) {
-      clearInterval(this.#heartbeatTimer);
-      this.#heartbeatTimer = null;
-    }
-    if (this.#reconnectTimer) {
-      clearTimeout(this.#reconnectTimer);
-      this.#reconnectTimer = null;
-    }
+    if (this.#heartbeatTimer) { clearInterval(this.#heartbeatTimer); this.#heartbeatTimer = null; }
+    if (this.#reconnectTimer) { clearTimeout(this.#reconnectTimer); this.#reconnectTimer = null; }
   }
 
   #setState(state: ServiceConnectionState): void {

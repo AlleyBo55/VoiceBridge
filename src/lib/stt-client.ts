@@ -1,6 +1,7 @@
 /**
- * ElevenLabs Scribe real-time STT WebSocket client.
- * Manages connection, audio streaming, transcript handling, and reconnection.
+ * ElevenLabs Scribe v2 Realtime STT WebSocket client.
+ * Uses the latest API: base64 audio chunks, committed_transcript events.
+ * Audited against ElevenLabs steering docs (April 2026).
  */
 
 import type { ServiceConnectionState } from './types.js';
@@ -23,9 +24,9 @@ export type STTConnectionState =
   | { status: 'error'; error: Error; lastAttempt: number };
 
 export interface STTConfig {
-  encoding: 'pcm_16000';
   languageCode: string;
-  model: 'scribe_v1';
+  model: 'scribe_v2_realtime';
+  encoding: 'pcm_16000';
 }
 
 export interface STTTranscript {
@@ -48,6 +49,18 @@ export function calculateBackoff(
   maxDelay: number = MAX_RECONNECT_DELAY_MS
 ): number {
   return Math.min(baseDelay * Math.pow(2, attempt), maxDelay);
+}
+
+// ── Helpers ─────────────────────────────────────────────────
+
+/** Convert Int16Array PCM to base64 string for the API */
+function pcmToBase64(pcm: Int16Array): string {
+  const bytes = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]!);
+  }
+  return btoa(binary);
 }
 
 // ── STT Client ──────────────────────────────────────────────
@@ -86,24 +99,26 @@ export class STTClient {
     this.#audioBuffer = [];
     this.#audioBufferDuration = 0;
 
-    if (this.#ws) {
-      // Send end_of_stream before closing
-      if (this.#ws.readyState === WebSocket.OPEN) {
-        this.#ws.send(JSON.stringify({ type: 'end_of_stream' }));
-      }
+    if (this.#ws && this.#ws.readyState === WebSocket.OPEN) {
+      // Close stream gracefully
+      this.#ws.send(JSON.stringify({ message_type: 'close_stream' }));
       this.#ws.close();
-      this.#ws = null;
     }
-
+    this.#ws = null;
     this.#setState({ status: 'disconnected' });
   }
 
   /**
    * Send a PCM Int16 audio chunk to the STT service.
+   * Converts to base64 per the Scribe v2 Realtime API.
    */
   sendAudio(chunk: Int16Array): void {
     if (this.#ws?.readyState === WebSocket.OPEN) {
-      this.#ws.send(chunk.buffer);
+      this.#ws.send(JSON.stringify({
+        message_type: 'input_audio_chunk',
+        audio_base_64: pcmToBase64(chunk),
+        sample_rate: 16000,
+      }));
     } else {
       // Buffer audio during disconnection (max 10 seconds)
       this.#audioBuffer.push(chunk);
@@ -120,7 +135,7 @@ export class STTClient {
    */
   commit(): void {
     if (this.#ws?.readyState === WebSocket.OPEN) {
-      this.#ws.send(JSON.stringify({ type: 'commit' }));
+      this.#ws.send(JSON.stringify({ message_type: 'commit' }));
     }
   }
 
@@ -138,7 +153,7 @@ export class STTClient {
       ws.onopen = () => {
         this.#reconnectAttempt = 0;
 
-        // Send config message
+        // Send config for Scribe v2 Realtime
         if (this.#config) {
           ws.send(JSON.stringify({
             type: 'config',
@@ -157,13 +172,8 @@ export class STTClient {
         this.#handleMessage(event.data as string);
       };
 
-      ws.onerror = () => {
-        this.#handleDisconnect();
-      };
-
-      ws.onclose = () => {
-        this.#handleDisconnect();
-      };
+      ws.onerror = () => { this.#handleDisconnect(); };
+      ws.onclose = () => { this.#handleDisconnect(); };
     } catch (error) {
       this.#setState({
         status: 'error',
@@ -176,9 +186,38 @@ export class STTClient {
 
   #handleMessage(data: string): void {
     try {
-      const msg = JSON.parse(data) as { type: string; text?: string; language?: string; message?: string };
+      const msg = JSON.parse(data) as {
+        type: string;
+        text?: string;
+        language?: string;
+        message?: string;
+        code?: string;
+      };
 
       switch (msg.type) {
+        // Scribe v2 Realtime events
+        case 'partial_transcript':
+          this.onPartialTranscript?.({
+            text: msg.text ?? '',
+            language: msg.language ?? '',
+            isFinal: false,
+            sequenceId: this.#currentSequenceId,
+            timestamp: Date.now(),
+          });
+          break;
+
+        case 'committed_transcript':
+        case 'committed_transcript_with_timestamps':
+          this.onFinalTranscript?.({
+            text: msg.text ?? '',
+            language: msg.language ?? '',
+            isFinal: true,
+            sequenceId: this.#currentSequenceId,
+            timestamp: Date.now(),
+          });
+          break;
+
+        // Legacy Scribe v1 events (backward compat)
         case 'transcript.partial':
           this.onPartialTranscript?.({
             text: msg.text ?? '',
@@ -199,8 +238,12 @@ export class STTClient {
           });
           break;
 
+        case 'session_started':
+          // Session confirmed — ready for audio
+          break;
+
         case 'error':
-          console.error('[STT] Server error:', msg.message);
+          console.error('[STT] Server error:', msg.code, msg.message);
           break;
       }
     } catch {
@@ -226,10 +269,7 @@ export class STTClient {
 
     const delay = calculateBackoff(this.#reconnectAttempt);
     this.#reconnectAttempt++;
-
-    this.#reconnectTimer = setTimeout(() => {
-      this.#createConnection();
-    }, delay);
+    this.#reconnectTimer = setTimeout(() => { this.#createConnection(); }, delay);
   }
 
   #flushAudioBuffer(): void {
@@ -243,25 +283,15 @@ export class STTClient {
   #startHeartbeat(): void {
     this.#heartbeatTimer = setInterval(() => {
       if (this.#ws?.readyState === WebSocket.OPEN) {
-        // WebSocket ping (protocol-level)
-        try {
-          this.#ws.send(new Uint8Array(0));
-        } catch {
-          this.#handleDisconnect();
-        }
+        try { this.#ws.send(new Uint8Array(0)); }
+        catch { this.#handleDisconnect(); }
       }
     }, HEARTBEAT_INTERVAL_MS);
   }
 
   #clearTimers(): void {
-    if (this.#heartbeatTimer) {
-      clearInterval(this.#heartbeatTimer);
-      this.#heartbeatTimer = null;
-    }
-    if (this.#reconnectTimer) {
-      clearTimeout(this.#reconnectTimer);
-      this.#reconnectTimer = null;
-    }
+    if (this.#heartbeatTimer) { clearInterval(this.#heartbeatTimer); this.#heartbeatTimer = null; }
+    if (this.#reconnectTimer) { clearTimeout(this.#reconnectTimer); this.#reconnectTimer = null; }
   }
 
   #setState(state: ServiceConnectionState): void {
