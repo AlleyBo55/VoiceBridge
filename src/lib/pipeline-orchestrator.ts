@@ -88,11 +88,31 @@ export class PipelineOrchestrator {
     this.#currentSequenceId = 0; this.#playbackHead = 1; this.#utterances.clear();
     this.#consecutiveHighLatency = 0; this.#totalUtterances = 0; this.#droppedUtterances = 0;
     this.#sessionActive = true; this.#sessionStartedAt = Date.now();
+
+    // Read all required settings
     const apiKey = await getSetting('elevenLabsApiKey');
+    const llmApiKey = await getSetting('llmApiKey');
+    const llmProvider = await getSetting('llmProvider');
+    const openRouterModel = await getSetting('openRouterModel');
+    const voiceId = await getSetting('voiceProfileId');
+    const voiceStability = await getSetting('voiceStability');
+    const voiceSimilarityBoost = await getSetting('voiceSimilarityBoost');
+    const voiceStyle = await getSetting('voiceStyle');
+
+    // Use a default ElevenLabs voice if no clone exists
+    const DEFAULT_VOICE_ID = 'JBFqnCBsd6RMkjVDRZzb'; // "George" — built-in ElevenLabs voice
+    const effectiveVoiceId = voiceId || DEFAULT_VOICE_ID;
+
     this.#latencyMonitor = new LatencyMonitor();
     this.#audioCapture = new AudioCaptureModule();
     this.#sttClient = new STTClient(apiKey);
-    this.#translationEngine = new TranslationEngine({ sourceLanguage: params.sourceLanguage, targetLanguage: params.targetLanguage });
+    this.#translationEngine = new TranslationEngine({
+      provider: llmProvider,
+      apiKey: llmApiKey,
+      openRouterModel,
+      sourceLanguage: params.sourceLanguage,
+      targetLanguage: params.targetLanguage,
+    });
     this.#ttsClient = new TTSClient();
     this.#audioOutput = new AudioOutputModule();
     this.#echoCancellation = new EchoCancellationModule({
@@ -100,8 +120,29 @@ export class PipelineOrchestrator {
       onStopTTS: () => this.#audioOutput?.stopPlayback(), onFadeOutTTS: (ms) => this.#audioOutput?.fadeOut(ms),
       onStateChange: () => { /* tracked via routing */ },
     });
-    await this.#audioOutput.initialize(); await this.#audioCapture.start();
+
+    // Initialize audio output and capture
+    await this.#audioOutput.initialize();
+    await this.#audioCapture.start();
+
+    // Connect STT (Scribe v2 Realtime)
     await this.#sttClient.connect({ encoding: 'pcm_16000', languageCode: params.sourceLanguage, model: 'scribe_v2_realtime' });
+
+    // Connect TTS (Flash v2.5 for lowest latency)
+    await this.#ttsClient.connect({
+      voiceId: effectiveVoiceId,
+      modelId: 'eleven_flash_v2_5',
+      outputFormat: 'pcm_24000',
+      voiceSettings: {
+        stability: voiceStability,
+        similarityBoost: voiceSimilarityBoost,
+        style: voiceStyle,
+        useSpeakerBoost: true,
+      },
+      apiKey,
+    });
+
+    // Wire callbacks
     this.#audioCapture.onSpeechEnd = () => this.handleSpeechEnd();
     this.#audioCapture.onAudioChunk = (chunk) => this.#sttClient?.sendAudio(chunk);
     this.#sttClient.onFinalTranscript = (t) => this.handleFinalTranscript(t.sequenceId, t.text, t.language);
@@ -109,8 +150,17 @@ export class PipelineOrchestrator {
     this.#ttsClient.onAudioChunk = (pcm, id) => this.handleTTSAudio(pcm, id);
     this.#ttsClient.onPlaybackEnd = (id) => this.handlePlaybackEnd(id);
     this.#ttsClient.onConnectionStateChange = (s) => this.handleServiceStateChange('tts', s);
+
+    // Mark LLM as connected (it's HTTP, not WebSocket — always "connected" if key exists)
+    if (llmApiKey) {
+      this.handleServiceStateChange('llm', { status: 'connected' });
+    }
+
     this.#transitionRouting({ type: 'session_start' }); this.#startHeartbeat(); this.#emitSessionState();
-    log('info', 'pipeline', 'Session started', { source: params.sourceLanguage, target: params.targetLanguage });
+    log('info', 'pipeline', 'Session started', {
+      source: params.sourceLanguage, target: params.targetLanguage,
+      voiceId: effectiveVoiceId, llmProvider, hasVoiceClone: !!voiceId,
+    });
   }
 
   /** Stop the current session — deterministic cleanup. */
