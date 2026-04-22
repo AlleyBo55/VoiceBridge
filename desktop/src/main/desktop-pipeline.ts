@@ -263,33 +263,34 @@ export class DesktopPipeline {
     }
   }
 
+  // Track latest partial for speech-end trigger
+  #lastPartialText = '';
+  #lastTranslatedText = '';
+
   #handleSTTMessage(data: string): void {
     try {
       const msg = JSON.parse(data) as Record<string, unknown>;
-
-      // Log raw message structure for debugging
-      const msgType = (msg['type'] ?? msg['message_type'] ?? msg['event'] ?? 'unknown') as string;
+      const msgType = (msg['message_type'] ?? msg['type'] ?? 'unknown') as string;
       const text = (msg['text'] ?? '') as string;
-      this.#debugLog.log('info', 'pipeline', `STT raw: ${msgType} ${text ? `"${text.slice(0, 60)}"` : ''} keys=[${Object.keys(msg).join(',')}]`);
 
-      // Handle different field naming conventions
-      const type = msgType;
-
-      if ((type === 'partial_transcript' || type === 'partial') && text) {
-        this.#debugLog.log('info', 'pipeline', `STT partial: "${msg.text.slice(0, 50)}"`);
+      if (msgType === 'partial_transcript' && text) {
+        this.#lastPartialText = text;
       }
 
-      if ((type === 'committed_transcript' || type === 'committed_transcript_with_timestamps' || type === 'final' || type === 'committed') && text) {
-        const finalText = text.trim();
-        if (!finalText) return;
+      if (msgType === 'committed_transcript' || msgType === 'committed_transcript_with_timestamps') {
+        const finalText = (text || this.#lastPartialText).trim();
+        if (finalText && finalText !== this.#lastTranslatedText) {
+          this.#lastTranslatedText = finalText;
+          this.#debugLog.log('info', 'pipeline', `STT committed: "${finalText.slice(0, 80)}"`);
+          this.#latencyMonitor.markSTTEnd(this.#currentSequenceId);
+          this.#emitStage(this.#currentSequenceId, 'TRANSCRIBED');
+          this.#translateAndSpeak(finalText, this.#currentSequenceId);
+        }
+        this.#lastPartialText = '';
+      }
 
-        this.#debugLog.log('info', 'pipeline', `STT final: "${finalText}"`);
-        this.#latencyMonitor.markSTTEnd(this.#currentSequenceId);
-
-        this.#emitStage(this.#currentSequenceId, 'TRANSCRIBED');
-
-        // Feed to translation
-        this.#translateAndSpeak(finalText, this.#currentSequenceId);
+      if (msgType === 'input_error') {
+        this.#debugLog.log('warn', 'pipeline', `STT input_error: ${JSON.stringify(msg['error'])}`);
       }
     } catch {
       this.#debugLog.log('error', 'pipeline', 'STT message parse error');
@@ -304,9 +305,20 @@ export class DesktopPipeline {
     this.#latencyMonitor.markCaptureEnd(this.#currentSequenceId);
     this.#emitStage(this.#currentSequenceId, 'CAPTURED');
 
-    // Tell STT to commit (finalize current transcript)
+    // If we have a partial transcript that hasn't been committed yet, use it directly
+    const pendingText = this.#lastPartialText.trim();
+    if (pendingText && pendingText !== this.#lastTranslatedText) {
+      this.#lastTranslatedText = pendingText;
+      this.#lastPartialText = '';
+      this.#debugLog.log('info', 'pipeline', `STT (from partial): "${pendingText.slice(0, 80)}"`);
+      this.#latencyMonitor.markSTTEnd(this.#currentSequenceId);
+      this.#emitStage(this.#currentSequenceId, 'TRANSCRIBED');
+      this.#translateAndSpeak(pendingText, this.#currentSequenceId);
+    }
+
+    // Also try commit in case the server supports it
     if (this.#sttWs?.readyState === WebSocket.OPEN) {
-      this.#sttWs.send(JSON.stringify({ message_type: 'commit' }));
+      try { this.#sttWs.send(JSON.stringify({ message_type: 'commit' })); } catch {}
     }
 
     this.#debugLog.log('info', 'pipeline', `Utterance ${this.#currentSequenceId} captured — commit sent`);
