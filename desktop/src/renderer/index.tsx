@@ -265,7 +265,38 @@ function DegradationLabel({ level }: { level: string }) {
 // ── Onboarding View ─────────────────────────────────────────
 
 function OnboardingView({ onComplete }: { onComplete: () => void }) {
-  const [step, setStep] = useState<'keys' | 'voice' | 'done'>('keys');
+  const [step, setStep] = useState<'setup' | 'keys' | 'voice' | 'done'>('setup');
+
+  // ── Step 0: Prerequisites ───────────────────────────────
+  const [prereqs, setPrereqs] = useState<{ ffmpeg: boolean; sox: boolean; blackhole: boolean; platform: string } | null>(null);
+  const [installing, setInstalling] = useState<string | null>(null);
+  const [installError, setInstallError] = useState('');
+
+  useEffect(() => {
+    vb.checkPrerequisites().then(setPrereqs);
+  }, []);
+
+  const handleInstallTool = useCallback(async (tool: string) => {
+    setInstalling(tool);
+    setInstallError('');
+    try {
+      const result = await vb.installPrerequisite(tool);
+      if (result.success) {
+        // Re-check all prerequisites
+        const updated = await vb.checkPrerequisites();
+        setPrereqs(updated);
+        if (result.requiresReboot) {
+          setInstallError('Installed. Restart your computer to activate the driver.');
+        }
+      } else {
+        setInstallError(result.error ?? 'Installation failed');
+      }
+    } catch (err) {
+      setInstallError(err instanceof Error ? err.message : 'Installation failed');
+    } finally {
+      setInstalling(null);
+    }
+  }, []);
 
   // ── Step 1: API Keys ────────────────────────────────────
   const [elevenLabsKey, setElevenLabsKey] = useState('');
@@ -387,6 +418,96 @@ function OnboardingView({ onComplete }: { onComplete: () => void }) {
     const m = Math.floor(s / 60);
     return `${m}:${(s % 60).toString().padStart(2, '0')}`;
   };
+
+  // ── Step 0: Prerequisites ───────────────────────────────
+  if (step === 'setup') {
+    const allReady = prereqs && prereqs.ffmpeg && prereqs.sox && prereqs.blackhole;
+    const platformLabel = prereqs?.platform === 'darwin' ? 'macOS' : prereqs?.platform === 'linux' ? 'Linux' : 'Windows';
+
+    const tools = [
+      { id: 'ffmpeg', name: 'ffmpeg', desc: 'Audio capture and routing', installed: prereqs?.ffmpeg ?? false,
+        hint: prereqs?.platform === 'darwin' ? 'brew install ffmpeg' : prereqs?.platform === 'linux' ? 'sudo apt install ffmpeg' : 'ffmpeg.org/download.html' },
+      { id: 'sox', name: 'SoX (Sound eXchange)', desc: 'Real-time speaker playback', installed: prereqs?.sox ?? false,
+        hint: prereqs?.platform === 'darwin' ? 'brew install sox' : prereqs?.platform === 'linux' ? 'sudo apt install sox' : 'sox.sourceforge.net' },
+      { id: 'blackhole', name: prereqs?.platform === 'darwin' ? 'BlackHole 2ch' : prereqs?.platform === 'linux' ? 'PulseAudio Sink' : 'VB-CABLE',
+        desc: 'Virtual microphone for meetings', installed: prereqs?.blackhole ?? false,
+        hint: prereqs?.platform === 'darwin' ? 'brew install --cask blackhole-2ch' : prereqs?.platform === 'linux' ? 'Auto-configured' : 'vb-audio.com/Cable' },
+    ];
+
+    return (
+      <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', padding: 'var(--space-lg)', gap: 'var(--space-md)', overflow: 'auto' }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--heading)', color: 'var(--text-display)', letterSpacing: 'var(--ls-heading)' }}>
+          VOICEBRIDGE
+        </div>
+        <div class="label">SETUP — AUDIO PREREQUISITES</div>
+        <div style={{ color: 'var(--text-secondary)', fontSize: 'var(--body-sm)', lineHeight: 1.5 }}>
+          VoiceBridge needs a few audio tools installed on your {platformLabel} system. Click each to install, or install manually via terminal.
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+          {tools.map(tool => (
+            <div key={tool.id} style={{
+              display: 'flex', alignItems: 'center', gap: 'var(--space-md)',
+              padding: 'var(--space-md)', background: 'var(--surface)',
+              border: `1px solid ${tool.installed ? 'var(--success)' : 'var(--border-visible)'}`,
+              borderRadius: 'var(--radius-lg)',
+            }}>
+              <div class="mono" style={{
+                fontSize: 'var(--heading)', width: '28px', textAlign: 'center',
+                color: tool.installed ? 'var(--success)' : 'var(--text-disabled)',
+              }}>
+                {tool.installed ? '✓' : '○'}
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ color: 'var(--text-primary)', fontSize: 'var(--body-sm)', fontWeight: 500 }}>
+                  {tool.name}
+                </div>
+                <div class="label" style={{ fontSize: '10px', color: 'var(--text-disabled)', marginTop: '2px' }}>
+                  {tool.desc}
+                </div>
+                {!tool.installed && (
+                  <div class="mono" style={{ fontSize: '10px', color: 'var(--text-disabled)', marginTop: '2px' }}>
+                    {tool.hint}
+                  </div>
+                )}
+              </div>
+              {!tool.installed && (
+                <button class="btn-secondary" style={{ padding: '6px 12px', fontSize: 'var(--caption)', whiteSpace: 'nowrap' }}
+                  onClick={() => handleInstallTool(tool.id)}
+                  disabled={installing !== null}>
+                  {installing === tool.id ? 'INSTALLING...' : 'INSTALL'}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {installError && (
+          <div class="mono" style={{ color: 'var(--accent)', fontSize: 'var(--caption)', whiteSpace: 'pre-wrap', lineHeight: 1.4 }}>
+            {installError}
+          </div>
+        )}
+
+        <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+          <button class="btn-primary" onClick={() => { vb.checkPrerequisites().then(setPrereqs); }}
+            disabled={installing !== null}
+            style={{ width: '100%', opacity: 0.7 }}>
+            RE-CHECK
+          </button>
+          <button class="btn-primary" onClick={() => setStep('keys')}
+            disabled={!prereqs?.ffmpeg}
+            style={{ width: '100%' }}>
+            {allReady ? 'NEXT — API KEYS' : prereqs?.ffmpeg ? 'CONTINUE (SOME MISSING)' : 'FFMPEG REQUIRED'}
+          </button>
+          {!prereqs?.ffmpeg && (
+            <div class="mono" style={{ fontSize: '10px', color: 'var(--text-disabled)', textAlign: 'center' }}>
+              ffmpeg is required. sox and virtual mic driver are optional but recommended.
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   // ── Step 1: API Keys ────────────────────────────────────
   if (step === 'keys') {
@@ -661,11 +782,16 @@ function SettingsView({ onBack }: { onBack: () => void }) {
       const devices = await vb.listDevices();
       setMicDevices(devices.map(d => ({ id: d.id, name: d.name })));
       const savedMic = await vb.getSetting('selectedMicDeviceId') as string;
-      if (savedMic) setSelectedMic(savedMic);
-      else if (devices.length > 0) {
-        // Default: pick first non-BlackHole device
+      const savedDevice = devices.find(d => d.id === savedMic);
+      const isVirtualSaved = savedDevice?.name.toLowerCase().includes('blackhole') || savedDevice?.name.toLowerCase().includes('cable');
+      if (savedMic && !isVirtualSaved) {
+        setSelectedMic(savedMic);
+      } else {
+        // Pick first non-virtual device
         const real = devices.find(d => !d.name.toLowerCase().includes('blackhole') && !d.name.toLowerCase().includes('cable'));
-        setSelectedMic(real?.id ?? devices[0]?.id ?? '');
+        const picked = real?.id ?? devices[0]?.id ?? '';
+        setSelectedMic(picked);
+        if (picked) await vb.setSetting('selectedMicDeviceId', picked);
       }
     } catch {}
     const vad = await vb.getSetting('vadSensitivity') as string;
@@ -873,9 +999,10 @@ function SettingsView({ onBack }: { onBack: () => void }) {
           await vb.selectDevice(id);
           await vb.setSetting('selectedMicDeviceId', id);
         }}>
-          {micDevices.map(d => (
-            <option key={d.id} value={d.id}>{d.name}{d.name.toLowerCase().includes('blackhole') ? ' ⚠️ (virtual output)' : ''}</option>
-          ))}
+          {micDevices.map(d => {
+            const isVirtual = d.name.toLowerCase().includes('blackhole') || d.name.toLowerCase().includes('cable');
+            return <option key={d.id} value={d.id} disabled={isVirtual}>{d.name}{isVirtual ? ' ⚠️ (DO NOT SELECT — virtual output)' : ''}</option>;
+          })}
         </select>
       </div>
 
@@ -893,6 +1020,23 @@ function SettingsView({ onBack }: { onBack: () => void }) {
         </select>
         <div class="mono" style={{ fontSize: '10px', color: 'var(--text-disabled)' }}>
           Controls how sensitive the mic is to detecting speech vs silence
+        </div>
+      </div>
+
+      {/* Push-to-Talk */}
+      <div class="card" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div class="label">PUSH-TO-TALK MODE</div>
+          <button class="btn-secondary" style={{ padding: '4px 12px', fontSize: '11px' }}
+            onClick={async () => {
+              const current = await vb.getSetting('pushToTalk') as boolean;
+              await vb.pttToggleMode(!current);
+            }}>
+            TOGGLE
+          </button>
+        </div>
+        <div class="mono" style={{ fontSize: '10px', color: 'var(--text-disabled)' }}>
+          When enabled, hold SPACE in the app window to talk. Prevents feedback loops and background noise pickup. Recommended when not using headphones.
         </div>
       </div>
 
@@ -1054,6 +1198,28 @@ function App() {
     }
   }, [eqMode, state.sessionActive]);
 
+  // Keyboard PTT — SPACE key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && !e.repeat && state.sessionActive) {
+        e.preventDefault();
+        vb.pttPress();
+      }
+    };
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && state.sessionActive) {
+        e.preventDefault();
+        vb.pttRelease();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [state.sessionActive]);
+
   const handleToggle = useCallback(async () => {
     if (!state.hasApiKeys) {
       dispatch({ type: 'SET_VIEW', view: 'settings' });
@@ -1192,6 +1358,11 @@ function App() {
               const val = (e.target as HTMLSelectElement).value;
               dispatch({ type: 'SET_LANGUAGES', source: val, target: state.targetLanguage });
               await vb.setSetting('sourceLanguage', val);
+              // Restart session with new language if active
+              if (state.sessionActive) {
+                await vb.stopSession('language-change');
+                await vb.startSession({ sourceLanguage: val, targetLanguage: state.targetLanguage });
+              }
             }}>
             <option value="auto">Auto-detect</option>
             {STT_LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
@@ -1206,6 +1377,11 @@ function App() {
               const val = (e.target as HTMLSelectElement).value;
               dispatch({ type: 'SET_LANGUAGES', source: state.sourceLanguage, target: val });
               await vb.setSetting('targetLanguage', val);
+              // Restart session with new language if active
+              if (state.sessionActive) {
+                await vb.stopSession('language-change');
+                await vb.startSession({ sourceLanguage: state.sourceLanguage, targetLanguage: val });
+              }
             }}>
             {TTS_LANGUAGES.filter(l => l.code !== state.sourceLanguage).map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
           </select>
@@ -1215,6 +1391,34 @@ function App() {
       {/* Equalizer Visualizer */}
       <Equalizer active={state.sessionActive} mode={eqMode} />
       <EqLegend mode={eqMode} />
+
+      {/* Push-to-Talk Button */}
+      {state.sessionActive && (
+        <div style={{ textAlign: 'center' }}>
+          <button
+            class="btn-primary"
+            style={{
+              width: '100%',
+              padding: '16px',
+              fontSize: 'var(--body-sm)',
+              background: 'var(--surface-raised)',
+              border: '2px solid var(--border-visible)',
+              userSelect: 'none',
+              touchAction: 'none',
+            }}
+            onMouseDown={() => vb.pttPress()}
+            onMouseUp={() => vb.pttRelease()}
+            onMouseLeave={() => vb.pttRelease()}
+            onTouchStart={() => vb.pttPress()}
+            onTouchEnd={() => vb.pttRelease()}
+          >
+            HOLD TO TALK
+          </button>
+          <div class="mono" style={{ fontSize: '10px', color: 'var(--text-disabled)', marginTop: '4px' }}>
+            Hold button or press SPACE to speak
+          </div>
+        </div>
+      )}
 
       {/* Latency Display */}
       <LatencyDisplay ms={state.latencyMs} color={state.latencyColor} />

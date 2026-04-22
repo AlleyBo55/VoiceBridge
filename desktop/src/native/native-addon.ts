@@ -11,6 +11,9 @@
  */
 
 import { spawn, execSync, type ChildProcess } from 'child_process';
+import { writeFileSync, unlinkSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import type { AudioDeviceInfo, CaptureConfig, DriverInstallResult, DriverStatus } from '../shared/types.js';
 
 // ── Interface ───────────────────────────────────────────────
@@ -35,11 +38,12 @@ export interface NativeAudioAddon {
 
 export class FfmpegNativeAddon implements NativeAudioAddon {
   #captureProcess: ChildProcess | null = null;
-  #outputProcess: ChildProcess | null = null;
   #sequenceId = 0;
   #capturing = false;
 
   onAudioChunk: ((pcm: Buffer, sequenceId: number) => void) | null = null;
+  
+  
 
   enumerateInputDevices(): AudioDeviceInfo[] {
     try {
@@ -54,7 +58,7 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
             const match = line.match(/\[(\d+)]\s+(.+)/);
             if (match) {
               devices.push({
-                id: match[1] ?? String(idx),
+                id: (match[2] ?? '').trim(),  // Use NAME as ID (indices change when devices plug/unplug)
                 name: (match[2] ?? '').trim(),
                 sampleRate: 48000,
                 channels: 1,
@@ -124,21 +128,18 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
 
   /** Write PCM audio to the virtual mic (BlackHole / PulseAudio sink). */
   #outputChunkCount = 0;
+
   writeVirtualMic(pcm: Buffer): void {
-    if (!this.#outputProcess || this.#outputProcess.killed) {
-      this.#startOutputProcess();
-    }
     this.#outputChunkCount++;
-    if (this.#outputChunkCount <= 3 || this.#outputChunkCount % 50 === 0) {
+    if (this.#outputChunkCount <= 5 || this.#outputChunkCount % 20 === 0) {
       console.log(`[Audio] Writing ${pcm.length} bytes to virtual mic (chunk #${this.#outputChunkCount})`);
     }
-    try {
-      this.#outputProcess?.stdin?.write(pcm);
-    } catch {
-      // Pipe broken — restart
-      this.#startOutputProcess();
-      try { this.#outputProcess?.stdin?.write(pcm); } catch {}
-    }
+
+    // Write as temp WAV and play with a short-lived ffmpeg → BlackHole
+    // No persistent pipe = no buffering = immediate playback
+    this.#playToBlackHole(pcm);
+    // Also play through speakers via afplay
+    this.#playThroughSpeaker(pcm);
   }
 
   isDriverInstalled(): boolean { return false; }
@@ -174,8 +175,9 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
 
   #buildCaptureArgs(deviceId: string, config: CaptureConfig): string[] {
     if (process.platform === 'darwin') {
-      // avfoundation: ":audioDeviceIndex" for audio-only
-      const devIdx = deviceId === 'default' ? '0' : deviceId;
+      // Resolve device name to current avfoundation index (indices change when devices plug/unplug)
+      const devIdx = this.#resolveDeviceIndex(deviceId);
+      console.log(`[Audio] Resolved mic "${deviceId}" → avfoundation index :${devIdx}`);
       return [
         '-f', 'avfoundation', '-i', `:${devIdx}`,
         '-ar', String(config.sampleRate),
@@ -204,49 +206,118 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
     ];
   }
 
-  #startOutputProcess(): void {
-    if (this.#outputProcess && !this.#outputProcess.killed) {
-      this.#outputProcess.kill('SIGTERM');
-    }
+  #bhIdx: number | null = null;
 
-    let args: string[];
-
+  /** Play PCM to BlackHole via a short-lived ffmpeg (no persistent pipe = no buffering) */
+  #playToBlackHole(pcm: Buffer): void {
     if (process.platform === 'darwin') {
-      // Find BlackHole device index
-      const bhIdx = this.#findBlackHoleIndex();
-      if (bhIdx === null) {
-        console.error('[Audio] BlackHole device not found — cannot output');
-        return;
+      if (this.#bhIdx === null) {
+        this.#bhIdx = this.#findBlackHoleIndex();
+        if (this.#bhIdx === null) {
+          console.error('[Audio] BlackHole device not found — cannot output');
+          return;
+        }
+        console.log(`[Audio] Found BlackHole at audiotoolbox device index ${this.#bhIdx}`);
       }
-      args = [
-        '-f', 's16le', '-ar', '48000', '-ac', '1', '-i', 'pipe:0',
-        '-f', 'audiotoolbox', '-audio_device_index', String(bhIdx),
+      // Spawn a short-lived ffmpeg that reads the PCM from stdin and plays to BlackHole
+      const proc = spawn('ffmpeg', [
+        '-y', '-f', 's16le', '-ar', '48000', '-ac', '1', '-i', 'pipe:0',
+        '-f', 'audiotoolbox', '-audio_device_index', String(this.#bhIdx),
         '',
-      ];
+      ], { stdio: ['pipe', 'ignore', 'ignore'] });
+      proc.stdin?.on('error', () => {});
+      proc.on('error', () => {});
+      try {
+        proc.stdin?.write(pcm);
+        proc.stdin?.end(); // Signal EOF — ffmpeg will play and exit
+      } catch(_e) {}
     } else if (process.platform === 'linux') {
-      args = [
+      const proc = spawn('ffmpeg', [
         '-f', 's16le', '-ar', '48000', '-ac', '1', '-i', 'pipe:0',
         '-f', 'pulse', 'voicebridge',
-      ];
-    } else {
-      args = [
-        '-f', 's16le', '-ar', '48000', '-ac', '1', '-i', 'pipe:0',
-        '-f', 'dshow', 'audio=CABLE Input',
-      ];
+      ], { stdio: ['pipe', 'ignore', 'ignore'] });
+      proc.stdin?.on('error', () => {});
+      try { proc.stdin?.write(pcm); proc.stdin?.end(); } catch(_e) {}
+    }
+  }
+
+  // Speaker playback — plays TTS audio through default speakers using afplay (macOS built-in)
+  #speakerPlayCount = 0;
+
+  /** Write raw PCM to a temp WAV file and play it with afplay (immediate, no buffering) */
+  #playThroughSpeaker(pcm: Buffer): void {
+    if (process.platform !== 'darwin') return;
+
+    this.#speakerPlayCount++;
+    const wavPath = join(tmpdir(), `vb-tts-${this.#speakerPlayCount}.wav`);
+
+    try {
+      // Build WAV header for 48kHz mono 16-bit PCM
+      const header = Buffer.alloc(44);
+      const dataSize = pcm.length;
+      const fileSize = 36 + dataSize;
+
+      header.write('RIFF', 0);
+      header.writeUInt32LE(fileSize, 4);
+      header.write('WAVE', 8);
+      header.write('fmt ', 12);
+      header.writeUInt32LE(16, 16);       // fmt chunk size
+      header.writeUInt16LE(1, 20);        // PCM format
+      header.writeUInt16LE(1, 22);        // mono
+      header.writeUInt32LE(48000, 24);    // sample rate
+      header.writeUInt32LE(96000, 28);    // byte rate (48000 * 1 * 2)
+      header.writeUInt16LE(2, 32);        // block align
+      header.writeUInt16LE(16, 34);       // bits per sample
+      header.write('data', 36);
+      header.writeUInt32LE(dataSize, 40);
+
+      writeFileSync(wavPath, Buffer.concat([header, pcm]));
+
+      // Play async — afplay returns immediately-ish and plays in background
+      const player = spawn('afplay', [wavPath], { stdio: 'ignore' });
+      player.on('close', () => {
+        try { unlinkSync(wavPath); } catch(_e4) {}
+      });
+      player.on('error', () => {
+        try { unlinkSync(wavPath); } catch(_e5) {}
+      });
+    } catch(_e) {
+      console.error('[Audio] Speaker playback failed');
+    }
+  }
+
+  /** Resolve a device name (or index string) to the current avfoundation audio index */
+  #resolveDeviceIndex(deviceId: string): string {
+    // If it's already a pure number, use it directly (legacy)
+    if (/^\d+$/.test(deviceId)) return deviceId;
+
+    // If it's 'default', find the first non-virtual device
+    if (deviceId === 'default') {
+      const dev = this.getDefaultInputDevice();
+      if (dev) return this.#resolveDeviceIndex(dev.id);
+      return '0';
     }
 
-    console.log('[Audio] Starting output:', 'ffmpeg', args.join(' '));
-    this.#outputProcess = spawn('ffmpeg', args, {
-      stdio: ['pipe', 'ignore', 'ignore'],
-    });
+    // Search by name in the current device list
+    try {
+      const out = execSync('ffmpeg -f avfoundation -list_devices true -i "" 2>&1 || true', { encoding: 'utf8', timeout: 5000 });
+      let inAudio = false;
+      for (const line of out.split('\n')) {
+        if (line.includes('AVFoundation audio devices')) { inAudio = true; continue; }
+        if (inAudio) {
+          const match = line.match(/\[(\d+)]\s+(.+)/);
+          if (match) {
+            const name = (match[2] ?? '').trim();
+            if (name === deviceId || name.toLowerCase().includes(deviceId.toLowerCase())) {
+              return match[1] ?? '0';
+            }
+          }
+        }
+      }
+    } catch {}
 
-    this.#outputProcess.on('error', (err) => {
-      console.error('[Audio] Output error:', err.message);
-    });
-
-    this.#outputProcess.on('close', (code) => {
-      console.log('[Audio] Output process exited:', code);
-    });
+    // Fallback: try as-is
+    return '0';
   }
 
   #findBlackHoleIndex(): number | null {
@@ -272,10 +343,8 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
 
   destroy(): void {
     this.stopCapture();
-    if (this.#outputProcess && !this.#outputProcess.killed) {
-      this.#outputProcess.kill('SIGTERM');
-      this.#outputProcess = null;
-    }
+    this.#outputChunkCount = 0;
+    this.#bhIdx = null;
   }
 }
 

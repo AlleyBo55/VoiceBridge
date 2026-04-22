@@ -199,6 +199,22 @@ function registerIPCHandlers(): void {
     return driverInstaller.uninstall();
   });
 
+  // Prerequisites — check and install ffmpeg + sox per platform
+  ipcMain.handle('prerequisites:check', () => {
+    return checkPrerequisites();
+  });
+  ipcMain.handle('prerequisites:install', async (_event, params: { tool: string }) => {
+    return installPrerequisite(params.tool);
+  });
+
+  // Push-to-talk
+  ipcMain.handle('ptt:press', () => { pipeline.pttPress(); });
+  ipcMain.handle('ptt:release', () => {  pipeline.pttRelease(); });
+  ipcMain.handle('ptt:toggle-mode', async (_event, params: { enabled: boolean }) => {
+    pipeline.setPTTEnabled(params.enabled);
+    await settings.set('pushToTalk', params.enabled);
+  });
+
   // Key validation — registered directly since these aren't in the typed channel map
   ipcMain.handle('validate:elevenlabs', async (_event, params: { key: string }) => {
     try {
@@ -312,6 +328,73 @@ function registerIPCHandlers(): void {
   handleInvoke('debug:get-log', () => {
     return debugLog.getEntries();
   });
+}
+
+// ── Prerequisites ────────────────────────────────────────────
+
+interface PrerequisiteStatus {
+  ffmpeg: boolean;
+  sox: boolean;
+  blackhole: boolean;
+  platform: string;
+}
+
+function checkPrerequisites(): PrerequisiteStatus {
+  const { execSync: ex } = require('child_process') as typeof import('child_process');
+  const check = (cmd: string): boolean => {
+    try { ex(`which ${cmd}`, { encoding: 'utf8', timeout: 3000 }); return true; } catch { return false; }
+  };
+  return {
+    ffmpeg: check('ffmpeg'),
+    sox: check('sox'),
+    blackhole: driverInstaller.checkInstalled().state === 'installed',
+    platform: process.platform,
+  };
+}
+
+async function installPrerequisite(tool: string): Promise<{ success: boolean; error?: string; requiresReboot?: boolean }> {
+  const { execSync: ex, spawn: sp } = require('child_process') as typeof import('child_process');
+  const platform = process.platform;
+
+  // Check brew on macOS
+  if (platform === 'darwin') {
+    try { ex('which brew', { encoding: 'utf8', timeout: 3000 }); } catch {
+      return { success: false, error: 'Homebrew not installed.\n\nOpen Terminal and run:\n/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"' };
+    }
+  }
+
+  try {
+    switch (tool) {
+      case 'ffmpeg': {
+        if (platform === 'darwin') {
+          ex('brew install ffmpeg', { encoding: 'utf8', timeout: 120000 });
+        } else if (platform === 'linux') {
+          ex('sudo apt-get install -y ffmpeg 2>/dev/null || sudo dnf install -y ffmpeg 2>/dev/null || sudo pacman -S --noconfirm ffmpeg 2>/dev/null', { encoding: 'utf8', timeout: 120000 });
+        } else {
+          return { success: false, error: 'Download ffmpeg from https://ffmpeg.org/download.html and add to PATH.' };
+        }
+        return { success: true };
+      }
+      case 'sox': {
+        if (platform === 'darwin') {
+          ex('brew install sox', { encoding: 'utf8', timeout: 120000 });
+        } else if (platform === 'linux') {
+          ex('sudo apt-get install -y sox 2>/dev/null || sudo dnf install -y sox 2>/dev/null || sudo pacman -S --noconfirm sox 2>/dev/null', { encoding: 'utf8', timeout: 120000 });
+        } else {
+          return { success: false, error: 'Download SoX from https://sox.sourceforge.net/ and add to PATH.' };
+        }
+        return { success: true };
+      }
+      case 'blackhole': {
+        const result = await driverInstaller.install();
+        return { success: result.success, error: result.error, requiresReboot: result.requiresReboot };
+      }
+      default:
+        return { success: false, error: `Unknown tool: ${tool}` };
+    }
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 // ── App Lifecycle ───────────────────────────────────────────

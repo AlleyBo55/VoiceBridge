@@ -217,6 +217,7 @@ export interface Language {
 export interface MainToRendererEvents {
   'pipeline:latency-update': LatencyMeasurement;
   'pipeline:stage-update': { sequenceId: number; stage: PipelineStage };
+  'pipeline:partial-transcript': { text: string };
   'pipeline:degradation-changed': { level: DegradationLevel; previous: DegradationLevel };
   'session:state-changed': SessionState;
   'connection:state-changed': { service: 'stt' | 'tts' | 'llm'; state: ServiceConnectionState };
@@ -274,6 +275,7 @@ export interface DesktopSettingsSchema {
   noiseGateThresholdDb: number;
   vadSensitivity: 'low' | 'medium' | 'high';
   ghostMode: boolean;
+  pushToTalk: boolean;
   autoStartEnabled: boolean;
   theme: 'dark' | 'light' | 'system';
   keyboardShortcuts: {
@@ -314,8 +316,9 @@ export const DEFAULT_SETTINGS: DesktopSettingsSchema = {
   voiceStyle: 0.3,
   selectedMicDeviceId: null,
   noiseGateThresholdDb: -40,
-  vadSensitivity: 'medium',
+  vadSensitivity: 'high',
   ghostMode: false,
+  pushToTalk: true,
   autoStartEnabled: false,
   theme: 'dark',
   keyboardShortcuts: {
@@ -343,6 +346,7 @@ export const VALID_RENDERER_CHANNELS: ReadonlySet<string> = new Set([
 
 export const VALID_MAIN_CHANNELS: ReadonlySet<string> = new Set([
   'pipeline:latency-update', 'pipeline:stage-update', 'pipeline:degradation-changed',
+  'pipeline:partial-transcript',
   'session:state-changed',
   'connection:state-changed',
   'audio:level', 'audio:driver-status',

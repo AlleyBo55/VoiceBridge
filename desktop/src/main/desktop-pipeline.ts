@@ -1,18 +1,17 @@
 /**
  * Desktop pipeline — FULL end-to-end wiring.
  *
- * Mic → STT (ElevenLabs Scribe) → Translation (LLM) → TTS (ElevenLabs) → BlackHole
+ * Mic → STT (ElevenLabs Scribe) → Translation (LLM) → TTS (ElevenLabs REST) → BlackHole
  *
  * This replaces the Chrome extension's offscreen document pipeline.
  * All WebSocket and HTTP calls happen in the Electron main process.
- * Audio capture uses the native addon (mock for now, real mic later).
+ * Audio capture uses the native addon (ffmpeg for real mic, mock fallback).
  */
 
 import type { BrowserWindow } from 'electron';
 import type { NativeAudioAddon } from '../native/native-addon.js';
 import type {
-  SessionState, VADState, ServiceConnectionState,
-  PipelineStage, DegradationLevel, EchoState,
+  VADState, ServiceConnectionState, PipelineStage,
 } from '../shared/types.js';
 import { AudioRouter, computeRmsDb } from './audio-router.js';
 import { DesktopSettingsStore } from './desktop-settings-store.js';
@@ -21,16 +20,20 @@ import { DesktopDebugLog } from './desktop-debug-log.js';
 import { DesktopLatencyMonitor } from './desktop-latency.js';
 
 // ── WebSocket polyfill for Node.js ──────────────────────────
-// Electron main process has no browser WebSocket — use the ws package
-// which is bundled with Electron
-const WebSocket = require('ws') as typeof import('ws').default;
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const WS = require('ws') as { new(url: string, opts?: Record<string, unknown>): WsSocket; OPEN: number };
+interface WsSocket {
+  readyState: number;
+  send(data: string | Buffer): void;
+  close(): void;
+  on(event: string, cb: (...args: unknown[]) => void): void;
+}
 
 // ── Constants ───────────────────────────────────────────────
 
 const DEFAULT_VOICE_ID = 'JBFqnCBsd6RMkjVDRZzb'; // "George" built-in voice
 const STT_ENDPOINT = 'wss://api.elevenlabs.io/v1/speech-to-text/realtime';
 const HEARTBEAT_INTERVAL_MS = 15000;
-const CHUNK_LENGTH_SCHEDULE = [50, 120, 200, 260];
 
 // ── Helpers ─────────────────────────────────────────────────
 
@@ -58,11 +61,13 @@ export class DesktopPipeline {
   #sourceLanguage = 'auto';
   #targetLanguage = 'es';
 
-  // WebSocket connections
-  #sttWs: InstanceType<typeof WebSocket> | null = null;
-  #ttsWs: InstanceType<typeof WebSocket> | null = null;
+  // STT WebSocket
+  #sttWs: WsSocket | null = null;
   #sttHeartbeat: ReturnType<typeof setInterval> | null = null;
-  #ttsHeartbeat: ReturnType<typeof setInterval> | null = null;
+
+  // Push-to-talk: when enabled, audio only goes to STT while PTT is held
+  #pttEnabled = false;
+  #pttActive = false; // true = button held down, sending audio
 
   // Pipeline config (loaded from settings at session start)
   #apiKey = '';
@@ -100,8 +105,12 @@ export class DesktopPipeline {
     this.#currentSequenceId = 0;
     this.#sourceLanguage = params.sourceLanguage;
     this.#targetLanguage = params.targetLanguage;
-    this.#lastPartialText = '';
-    this.#processedTextLength = 0;
+    this.#lastTranslatedTexts.clear();
+    this.#utteranceQueue = [];
+    this.#processingUtterance = false;
+    this.#sttMessageCount = 0;
+    this.#lastSttMessageAt = 0;
+    if (this.#sttWatchdog) { clearInterval(this.#sttWatchdog); this.#sttWatchdog = null; }
 
     // Load settings
     this.#apiKey = await this.#settings.get('elevenLabsApiKey');
@@ -125,17 +134,13 @@ export class DesktopPipeline {
     this.#emitConnectionState('stt', { status: 'connecting', attempt: 0 });
     await this.#connectSTT();
 
-    // 2. Connect TTS WebSocket
-    this.#debugLog.log('info', 'pipeline', 'Connecting TTS...');
-    this.#emitConnectionState('tts', { status: 'connecting', attempt: 0 });
-    await this.#connectTTS();
-
-    // 3. Mark LLM as connected (it's HTTP, always available if key exists)
+    // 2. LLM + TTS use REST APIs — no persistent connections needed
     if (this.#llmApiKey) {
       this.#emitConnectionState('llm', { status: 'connected' });
     }
+    this.#emitConnectionState('tts', { status: 'connected' });
 
-    // 4. Start audio capture
+    // 3. Start audio capture
     const ghostMode = await this.#settings.get('ghostMode');
     const deviceId = await this.#settings.get('selectedMicDeviceId');
 
@@ -156,6 +161,8 @@ export class DesktopPipeline {
     };
 
     const vadSensitivity = await this.#settings.get('vadSensitivity');
+    this.#pttEnabled = (await this.#settings.get('pushToTalk')) === true;
+    this.#pttActive = false;
     const vadThresholds = {
       low:    { threshold: -35, onset: 400, offset: 1000 },
       medium: { threshold: -50, onset: 200, offset: 600 },
@@ -176,6 +183,20 @@ export class DesktopPipeline {
     this.#audioRouter.transitionRouting({ type: 'session_start' });
     this.#emitSessionState();
 
+    // Start STT watchdog — reconnect if no messages for 10s
+    // Only active in VAD mode (PTT off). In PTT mode, silence between presses is normal.
+    this.#sttWatchdog = setInterval(() => {
+      if (!this.#sessionActive) return;
+      // Skip watchdog in PTT mode — silence is expected when not pressing
+      if (this.#pttEnabled) return;
+      const silentMs = Date.now() - this.#lastSttMessageAt;
+      if (this.#lastSttMessageAt > 0 && silentMs > 10000 && this.#sttWs) {
+        this.#debugLog.log('warn', 'connection', `STT silent for ${(silentMs / 1000).toFixed(0)}s — forcing reconnect`);
+        try { this.#sttWs.close(); } catch(_e) {}
+        this.#sttWs = null;
+      }
+    }, 3000);
+
     this.#debugLog.log('info', 'pipeline', 'Session started', {
       source: params.sourceLanguage, target: params.targetLanguage,
       voiceId: this.#voiceId, llmProvider: this.#llmProvider,
@@ -188,25 +209,20 @@ export class DesktopPipeline {
 
     this.#debugLog.log('info', 'pipeline', `Session stopping: ${reason}`);
 
-    // Stop audio
+    // Stop audio and kill ffmpeg output process
     this.#audioRouter.transitionRouting({ type: 'session_stop' });
     this.#audioRouter.stop();
+    if ('destroy' in this.#nativeAddon) {
+      (this.#nativeAddon as { destroy(): void }).destroy();
+    }
 
     // Disconnect STT
     if (this.#sttWs) {
-      try { this.#sttWs.send(JSON.stringify({ message_type: 'close_stream' })); } catch(_e) {}
-      this.#sttWs.close();
+      try { this.#sttWs.close(); } catch(_e) {}
       this.#sttWs = null;
     }
     if (this.#sttHeartbeat) { clearInterval(this.#sttHeartbeat); this.#sttHeartbeat = null; }
-
-    // Disconnect TTS
-    if (this.#ttsWs) {
-      try { this.#ttsWs.send(JSON.stringify({ text: '' })); } catch(_e) {}
-      this.#ttsWs.close();
-      this.#ttsWs = null;
-    }
-    if (this.#ttsHeartbeat) { clearInterval(this.#ttsHeartbeat); this.#ttsHeartbeat = null; }
+    if (this.#sttWatchdog) { clearInterval(this.#sttWatchdog); this.#sttWatchdog = null; }
 
     this.#emitConnectionState('stt', { status: 'disconnected' });
     this.#emitConnectionState('tts', { status: 'disconnected' });
@@ -224,12 +240,52 @@ export class DesktopPipeline {
   getAudioRouter(): AudioRouter { return this.#audioRouter; }
   isActive(): boolean { return this.#sessionActive; }
 
+  /** Enable/disable push-to-talk mode */
+  setPTTEnabled(enabled: boolean): void {
+    this.#pttEnabled = enabled;
+    this.#pttActive = false;
+    this.#debugLog.log('info', 'pipeline', `PTT mode: ${enabled ? 'ON' : 'OFF'}`);
+  }
+
+  /** Press PTT — start sending audio to STT */
+  pttPress(): void {
+    if (!this.#sessionActive || !this.#pttEnabled) return;
+    if (this.#pttActive) return; // Already pressed
+    this.#pttActive = true;
+    this.#debugLog.log('info', 'pipeline', 'PTT pressed — mic open');
+  }
+
+  /** Release PTT — commit and stop sending audio */
+  pttRelease(): void {
+    if (!this.#sessionActive || !this.#pttEnabled) return;
+    if (!this.#pttActive) return; // Already released — prevent double commit
+    this.#pttActive = false;
+    this.#commitSTT();
+    this.#debugLog.log('info', 'pipeline', 'PTT released — mic closed');
+    // Reconnect STT after commit so next press starts fresh (no accumulated buffer)
+    setTimeout(() => {
+      if (this.#sessionActive && this.#sttWs) {
+        try { this.#sttWs.close(); } catch(_e) {}
+        this.#sttWs = null;
+        // close handler auto-reconnects
+      }
+    }, 1500); // Wait 1.5s for committed_transcript to arrive before closing
+  }
+
+  isPTTEnabled(): boolean { return this.#pttEnabled; }
+
   // ── STT Connection ────────────────────────────────────────
 
   async #connectSTT(): Promise<void> {
     return new Promise<void>((resolve) => {
-      const url = `${STT_ENDPOINT}?model_id=scribe_v2_realtime`;
-      const ws = new WebSocket(url, {
+      // Pass config via query params — language, format, and VAD commit strategy
+      const langParam = this.#sourceLanguage !== 'auto' ? `&language_code=${this.#sourceLanguage}` : '';
+      // Use manual commit when PTT is on (we commit on release), VAD commit when PTT is off
+      const commitStrategy = this.#pttEnabled ? 'manual' : 'vad';
+      const vadParams = this.#pttEnabled ? '' : '&vad_threshold=0.2&vad_silence_threshold_secs=0.8';
+      const url = `${STT_ENDPOINT}?model_id=scribe_v2_realtime&audio_format=pcm_16000&commit_strategy=${commitStrategy}${vadParams}${langParam}`;
+      this.#debugLog.log('info', 'connection', `STT URL: ${url.replace(/xi-api-key=[^&]+/, 'xi-api-key=***')}`);
+      const ws = new WS(url, {
         headers: { 'xi-api-key': this.#apiKey },
       });
       this.#sttWs = ws;
@@ -238,9 +294,8 @@ export class DesktopPipeline {
         this.#emitConnectionState('stt', { status: 'connected' });
         this.#debugLog.log('info', 'connection', 'STT connected');
 
-        // Heartbeat
         this.#sttHeartbeat = setInterval(() => {
-          if (ws.readyState === WebSocket.OPEN) {
+          if (ws.readyState === WS.OPEN) {
             try { ws.send(Buffer.alloc(0)); } catch(_e) {}
           }
         }, HEARTBEAT_INTERVAL_MS);
@@ -248,66 +303,129 @@ export class DesktopPipeline {
         resolve();
       });
 
-      ws.on('message', (data: Buffer | string) => {
+      ws.on('message', (...args: unknown[]) => {
+        const data = args[0] as Buffer | string;
         this.#handleSTTMessage(typeof data === 'string' ? data : data.toString());
       });
 
-      ws.on('error', (err: Error) => {
+      ws.on('error', (...args: unknown[]) => {
+        const err = args[0] as Error;
         this.#debugLog.log('error', 'connection', `STT error: ${err.message}`);
         this.#emitConnectionState('stt', { status: 'error', error: err.message, retryable: true });
-        resolve(); // Don't block session start
+        resolve();
       });
 
-      ws.on('close', () => {
+      ws.on('close', (...args: unknown[]) => {
+        const code = args[0] as number | undefined;
+        const reason = args[1] as string | undefined;
+        this.#debugLog.log('warn', 'connection', `STT closed: code=${code ?? '?'} reason="${reason ?? ''}"` );
         if (this.#sttHeartbeat) { clearInterval(this.#sttHeartbeat); this.#sttHeartbeat = null; }
+        this.#sttWs = null;
         if (this.#sessionActive) {
           this.#emitConnectionState('stt', { status: 'disconnected' });
+          // Auto-reconnect after 500ms
+          this.#debugLog.log('info', 'connection', 'STT auto-reconnecting in 500ms...');
+          setTimeout(() => {
+            if (this.#sessionActive && !this.#sttWs) {
+              this.#connectSTT();
+            }
+          }, 500);
         }
       });
     });
   }
 
   #sendAudioToSTT(chunk: Int16Array): void {
-    if (this.#sttWs?.readyState === WebSocket.OPEN) {
+    // PTT gate: if push-to-talk is enabled, only send when button is held
+    if (this.#pttEnabled && !this.#pttActive) return;
+
+    if (this.#sttWs?.readyState === WS.OPEN) {
       this.#sttWs.send(JSON.stringify({
         message_type: 'input_audio_chunk',
         audio_base_64: pcmToBase64(chunk),
+        commit: false,
         sample_rate: 16000,
       }));
     }
   }
 
-  // Track latest partial for speech-end trigger
-  #lastPartialText = '';
-  #processedTextLength = 0; // How many chars of the accumulated STT text we've already translated
+  /** Send a commit signal to STT — forces finalization of current transcript */
+  #commitSTT(): void {
+    if (this.#sttWs?.readyState === WS.OPEN) {
+      this.#sttWs.send(JSON.stringify({
+        message_type: 'input_audio_chunk',
+        audio_base_64: '',
+        commit: true,
+        sample_rate: 16000,
+      }));
+      this.#debugLog.log('info', 'pipeline', 'STT commit sent');
+    }
+  }
+
+  // ── STT State ─────────────────────────────────────────────
+
+  #lastTranslatedTexts = new Set<string>();
+
+  #sttMessageCount = 0;
+  #lastSttMessageAt = 0;
+  #sttWatchdog: ReturnType<typeof setInterval> | null = null;
 
   #handleSTTMessage(data: string): void {
+    this.#sttMessageCount++;
+    this.#lastSttMessageAt = Date.now();
     try {
       const msg = JSON.parse(data) as Record<string, unknown>;
       const msgType = (msg['message_type'] ?? msg['type'] ?? 'unknown') as string;
       const text = (msg['text'] ?? '') as string;
 
+      // Log ALL messages for debugging (first 20 + every 10th after)
+      if (this.#sttMessageCount <= 20 || this.#sttMessageCount % 10 === 0) {
+        this.#debugLog.log('info', 'pipeline', `STT msg #${this.#sttMessageCount}: ${msgType} "${(text || '').slice(0, 60)}"`);
+      }
+
+      // Log session_started and all error types
+      if (msgType === 'session_started') {
+        this.#debugLog.log('info', 'connection', `STT session started: ${JSON.stringify(msg['config'] ?? {}).slice(0, 120)}`);
+        return;
+      }
+
+      if (msgType.includes('error') || msgType === 'quota_exceeded' || msgType === 'rate_limited' || msgType === 'auth_error') {
+        this.#debugLog.log('error', 'pipeline', `STT ${msgType}: ${JSON.stringify(msg['error'] ?? msg).slice(0, 200)}`);
+        return;
+      }
+
+      // commit_throttled = we sent too many commits too fast. Just ignore it.
+      if (msgType === 'commit_throttled') {
+        this.#debugLog.log('warn', 'pipeline', 'STT commit throttled — too many commits');
+        return;
+      }
+
+      // Show partials in UI but don't translate them — wait for committed transcript
       if (msgType === 'partial_transcript' && text) {
-        this.#lastPartialText = text;
+        this.#mainWindow?.webContents?.send('pipeline:partial-transcript', { text });
       }
 
+      // Committed transcripts are the authoritative trigger for translation.
+      // Server-side VAD commits automatically, our #commitSTT() on speech-end is backup.
       if (msgType === 'committed_transcript' || msgType === 'committed_transcript_with_timestamps') {
-        const fullText = (text || this.#lastPartialText).trim();
-        if (fullText && fullText.length > this.#processedTextLength) {
-          const newText = fullText.slice(this.#processedTextLength).trim();
-          if (newText) {
-            this.#processedTextLength = fullText.length;
-            this.#debugLog.log('info', 'pipeline', `STT committed (new): "${newText.slice(0, 80)}"`);
-            this.#latencyMonitor.markSTTEnd(this.#currentSequenceId);
-            this.#emitStage(this.#currentSequenceId, 'TRANSCRIBED');
-            this.#translateAndSpeak(newText, this.#currentSequenceId);
-          }
-        }
-        this.#lastPartialText = '';
-      }
+        const committedText = text.trim();
+        if (!committedText) return;
 
-      if (msgType === 'input_error') {
-        this.#debugLog.log('warn', 'pipeline', `STT input_error: ${JSON.stringify(msg['error'])}`);
+        // Content-based dedup
+        if (this.#lastTranslatedTexts.has(committedText)) {
+          this.#debugLog.log('info', 'pipeline', `Skipping duplicate commit: "${committedText.slice(0, 40)}"`);
+          return;
+        }
+        this.#lastTranslatedTexts.add(committedText);
+        if (this.#lastTranslatedTexts.size > 50) {
+          const first = this.#lastTranslatedTexts.values().next().value;
+          if (first) this.#lastTranslatedTexts.delete(first);
+        }
+
+        this.#debugLog.log('info', 'pipeline', `STT committed: "${committedText.slice(0, 80)}"`);
+        this.#latencyMonitor.markSTTEnd(this.#currentSequenceId);
+        this.#emitStage(this.#currentSequenceId, 'TRANSCRIBED');
+        this.#enqueueUtterance(committedText, this.#currentSequenceId);
       }
     } catch(_e) {
       this.#debugLog.log('error', 'pipeline', 'STT message parse error');
@@ -318,46 +436,60 @@ export class DesktopPipeline {
     if (!this.#sessionActive) return;
     this.#currentSequenceId++;
     this.#totalUtterances++;
-
     this.#latencyMonitor.markCaptureEnd(this.#currentSequenceId);
     this.#emitStage(this.#currentSequenceId, 'CAPTURED');
+    // Only commit from VAD when PTT is disabled — PTT release handles its own commit
+    if (!this.#pttEnabled) {
+      this.#commitSTT();
+    }
+    this.#debugLog.log('info', 'pipeline', `Utterance ${this.#currentSequenceId} captured`);
+  }
 
-    // Extract only the NEW text since last translation
-    const fullText = this.#lastPartialText.trim();
-    if (!fullText || fullText.length <= this.#processedTextLength) {
-      // If STT stopped sending partials, reset the offset so next partial works
-      if (!fullText && this.#processedTextLength > 0) {
-        this.#debugLog.log('info', 'pipeline', `Resetting STT offset (was ${this.#processedTextLength}) — STT may have reset`);
-        this.#processedTextLength = 0;
+  // ── Utterance Queue (like OBS frame buffer) ───────────────
+
+  #utteranceQueue: Array<{ text: string; seqId: number }> = [];
+  #processingUtterance = false;
+
+  #enqueueUtterance(text: string, seqId: number): void {
+    this.#utteranceQueue.push({ text, seqId });
+    this.#debugLog.log('info', 'pipeline', `Queued utterance #${seqId} (${this.#utteranceQueue.length} in queue)`);
+    this.#processNextUtterance();
+  }
+
+  async #processNextUtterance(): Promise<void> {
+    if (this.#processingUtterance) return;
+    if (this.#utteranceQueue.length === 0) return;
+    if (!this.#sessionActive) return;
+
+    this.#processingUtterance = true;
+    const { text, seqId } = this.#utteranceQueue.shift()!;
+
+    try {
+      // 1. Translate
+      const translation = await this.#translate(text, seqId);
+      if (!translation || !this.#sessionActive) {
+        this.#processingUtterance = false;
+        this.#processNextUtterance();
+        return;
       }
-      return;
+
+      // 2. Generate speech via REST TTS
+      await this.#speakWithRestTTS(translation);
+
+      this.#debugLog.log('info', 'pipeline', `✓ Utterance #${seqId} complete (${this.#utteranceQueue.length} remaining)`);
+    } catch (err) {
+      this.#debugLog.log('error', 'pipeline', `Utterance #${seqId} failed: ${err instanceof Error ? err.message : String(err)}`);
     }
 
-    const newText = fullText.slice(this.#processedTextLength).trim();
-    if (!newText) { return; }
-
-    this.#processedTextLength = fullText.length;
-    this.#lastPartialText = '';
-    this.#debugLog.log('info', 'pipeline', `STT (new): "${newText.slice(0, 80)}"`);
-    this.#latencyMonitor.markSTTEnd(this.#currentSequenceId);
-    this.#emitStage(this.#currentSequenceId, 'TRANSCRIBED');
-
-    // Reconnect TTS if closed (it closes after isFinal)
-    if (!this.#ttsWs || this.#ttsWs.readyState !== WebSocket.OPEN) {
-      this.#debugLog.log('info', 'connection', 'Reconnecting TTS...');
-      await this.#connectTTS();
+    this.#processingUtterance = false;
+    if (this.#sessionActive) {
+      this.#processNextUtterance();
     }
-
-    this.#translateAndSpeak(newText, this.#currentSequenceId);
-
-    // Note: commit not supported on this endpoint — partials are used directly
-
-    this.#debugLog.log('info', 'pipeline', `Utterance ${this.#currentSequenceId} captured — commit sent`);
   }
 
   // ── Translation ───────────────────────────────────────────
 
-  async #translateAndSpeak(text: string, sequenceId: number): Promise<void> {
+  async #translate(text: string, sequenceId: number): Promise<string | null> {
     this.#latencyMonitor.markTranslationStart(sequenceId);
 
     try {
@@ -376,7 +508,6 @@ export class DesktopPipeline {
           stream: true, max_tokens: 500,
         };
       } else {
-        // OpenAI or OpenRouter
         url = this.#llmProvider === 'openrouter'
           ? 'https://openrouter.ai/api/v1/chat/completions'
           : 'https://api.openai.com/v1/chat/completions';
@@ -405,12 +536,11 @@ export class DesktopPipeline {
       if (!response.ok) {
         this.#debugLog.log('error', 'pipeline', `LLM error: ${response.status}`);
         this.#droppedUtterances++;
-        return;
+        return null;
       }
 
-      // Stream tokens → TTS
       const reader = response.body?.getReader();
-      if (!reader) return;
+      if (!reader) return null;
 
       const decoder = new TextDecoder();
       let buffer = '';
@@ -449,22 +579,21 @@ export class DesktopPipeline {
                 firstToken = false;
               }
               fullTranslation += token;
-              // Stream token to TTS
-              this.#sendTextToTTS(token);
             }
-          } catch(_e2) { /* skip malformed */ }
+          } catch(_e) { /* skip malformed */ }
         }
       }
 
       if (fullTranslation) {
         this.#debugLog.log('info', 'pipeline', `Translation: "${fullTranslation.slice(0, 80)}"`);
-        // Flush TTS to generate remaining audio
-        this.#flushTTS();
+        return fullTranslation;
       }
+      return null;
 
     } catch (err) {
       this.#debugLog.log('error', 'pipeline', `Translation failed: ${err instanceof Error ? err.message : String(err)}`);
       this.#droppedUtterances++;
+      return null;
     }
   }
 
@@ -473,130 +602,57 @@ export class DesktopPipeline {
     return `You are a real-time speech translator. Translate from ${src} to ${this.#targetLanguage}. Output ONLY the translated text. No explanations, no brackets, no notes. Keep it concise and natural.`;
   }
 
-  // ── TTS Connection ────────────────────────────────────────
+  // ── REST TTS ──────────────────────────────────────────────
 
-  async #connectTTS(): Promise<void> {
-    const url = `wss://api.elevenlabs.io/v1/text-to-speech/${this.#voiceId}/stream-input?model_id=eleven_flash_v2_5`;
+  /**
+   * Generate speech via ElevenLabs REST API and play it to BlackHole.
+   * Each call is independent — no shared state to corrupt.
+   */
+  async #speakWithRestTTS(text: string): Promise<void> {
+    if (!text.trim()) return;
 
-    return new Promise<void>((resolve) => {
-      const ws = new WebSocket(url);
-      this.#ttsWs = ws;
-
-      ws.on('open', () => {
-        // Init message
-        ws.send(JSON.stringify({
-          text: ' ',
-          voice_settings: {
-            stability: this.#voiceStability,
-            similarity_boost: this.#voiceSimilarityBoost,
-            style: this.#voiceStyle,
-            use_speaker_boost: true,
-          },
-          generation_config: { chunk_length_schedule: CHUNK_LENGTH_SCHEDULE },
-          xi_api_key: this.#apiKey,
-          output_format: 'pcm_24000',
-        }));
-
-        this.#emitConnectionState('tts', { status: 'connected' });
-        this.#debugLog.log('info', 'connection', 'TTS connected');
-
-        // Heartbeat
-        this.#ttsHeartbeat = setInterval(() => {
-          if (ws.readyState === WebSocket.OPEN) {
-            try { ws.send(Buffer.alloc(0)); } catch(_e) {}
-          }
-        }, HEARTBEAT_INTERVAL_MS);
-
-        resolve();
-      });
-
-      ws.on('message', (data: Buffer | string) => {
-        this.#handleTTSMessage(data);
-      });
-
-      ws.on('error', (err: Error) => {
-        this.#debugLog.log('error', 'connection', `TTS error: ${err.message}`);
-        this.#emitConnectionState('tts', { status: 'error', error: err.message, retryable: true });
-        resolve();
-      });
-
-      ws.on('close', () => {
-        if (this.#ttsHeartbeat) { clearInterval(this.#ttsHeartbeat); this.#ttsHeartbeat = null; }
-        if (this.#sessionActive) {
-          this.#emitConnectionState('tts', { status: 'disconnected' });
-        }
-      });
-    });
-  }
-
-  #ttsSentChars = 0;
-
-  #sendTextToTTS(text: string): void {
-    if (this.#ttsWs?.readyState === WebSocket.OPEN) {
-      this.#ttsSentChars += text.length;
-      this.#ttsWs.send(JSON.stringify({ text }));
-    } else {
-      this.#debugLog.log('warn', 'pipeline', `TTS WebSocket not open (state=${this.#ttsWs?.readyState}), dropping text`);
-    }
-  }
-
-  #flushTTS(): void {
-    if (this.#ttsWs?.readyState === WebSocket.OPEN) {
-      this.#debugLog.log('info', 'pipeline', `TTS flush — sent ${this.#ttsSentChars} chars total`);
-      this.#ttsWs.send(JSON.stringify({ text: '', flush: true }));
-      this.#ttsSentChars = 0;
-    }
-  }
-
-  #ttsMessageCount = 0;
-
-  #handleTTSMessage(data: Buffer | string): void {
-    this.#ttsMessageCount++;
-
-    const str = typeof data === 'string' ? data : data.toString('utf8');
-
-    // Log first few messages for debugging
-    if (this.#ttsMessageCount <= 5) {
-      this.#debugLog.log('info', 'pipeline', `TTS msg #${this.#ttsMessageCount}: ${str.slice(0, 100)}`);
-    }
-
-    // Try JSON first — TTS sends base64 audio in JSON messages
     try {
-      const msg = JSON.parse(str) as { audio?: string; isFinal?: boolean; message?: string };
-
-      if (msg.audio) {
-        const audioBuffer = Buffer.from(msg.audio, 'base64');
-        if (this.#ttsMessageCount <= 3 || this.#ttsMessageCount % 20 === 0) {
-          this.#debugLog.log('info', 'pipeline', `TTS audio chunk #${this.#ttsMessageCount}: ${audioBuffer.length} bytes`);
+      const response = await fetch(
+        `https://api.elevenlabs.io/v1/text-to-speech/${this.#voiceId}?output_format=pcm_24000`,
+        {
+          method: 'POST',
+          headers: {
+            'xi-api-key': this.#apiKey,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            text,
+            model_id: 'eleven_flash_v2_5',
+            voice_settings: {
+              stability: this.#voiceStability,
+              similarity_boost: this.#voiceSimilarityBoost,
+              style: this.#voiceStyle,
+            },
+          }),
+          signal: AbortSignal.timeout(15000),
         }
+      );
+
+      if (!response.ok) {
+        this.#debugLog.log('error', 'pipeline', `TTS REST error: ${response.status}`);
+        return;
+      }
+
+      const audioBuffer = Buffer.from(await response.arrayBuffer());
+      this.#debugLog.log('info', 'pipeline', `TTS REST: ${audioBuffer.length} bytes for "${text.slice(0, 40)}"`);
+
+      if (audioBuffer.length > 0) {
         this.#latencyMonitor.markTTSFirstByte(this.#currentSequenceId);
         this.#emitStage(this.#currentSequenceId, 'SYNTHESIZED');
-        this.#audioRouter.writeTTSAudio(audioBuffer);
-        this.#audioRouter.transitionRouting({ type: 'tts_start' });
-      }
 
-      if (msg.isFinal) {
-        this.#audioRouter.transitionRouting({ type: 'tts_end' });
-        this.#latencyMonitor.markPlaybackStart(this.#currentSequenceId);
+        // Resample 24kHz → 48kHz and write to BlackHole
+        const resampled = this.#nativeAddon.resample(audioBuffer, 24000, 48000);
+        this.#nativeAddon.writeVirtualMic(resampled);
+
         this.#emitStage(this.#currentSequenceId, 'PLAYED');
-        this.#debugLog.log('info', 'pipeline', `Utterance ${this.#currentSequenceId} played (${this.#ttsMessageCount} TTS messages)`);
-        this.#ttsMessageCount = 0;
-
-        // Pre-connect next TTS session immediately so it's ready for the next utterance
-        this.#debugLog.log('info', 'connection', 'Pre-connecting TTS for next utterance...');
-        this.#connectTTS().catch((_e3) => {});
       }
-
-      return;
-    } catch(_e) {
-      // Not JSON — treat as raw binary PCM
-    }
-
-    // Raw binary audio fallback
-    if (Buffer.isBuffer(data) && data.length > 100) {
-      this.#debugLog.log('info', 'pipeline', `TTS raw binary: ${data.length} bytes`);
-      this.#audioRouter.writeTTSAudio(data);
-      this.#audioRouter.transitionRouting({ type: 'tts_start' });
+    } catch (err) {
+      this.#debugLog.log('error', 'pipeline', `TTS REST failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
