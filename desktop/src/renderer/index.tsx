@@ -989,7 +989,7 @@ function App() {
         <div class="card" style={{ textAlign: 'center' }}>
           <div class="label" style={{ marginBottom: 'var(--space-sm)' }}>VIRTUAL MIC NOT INSTALLED</div>
           <div style={{ color: 'var(--text-secondary)', fontSize: 'var(--caption)', marginBottom: 'var(--space-sm)' }}>
-            {process.platform === 'darwin' ? 'Installs BlackHole 2ch via Homebrew' : process.platform === 'linux' ? 'Creates PulseAudio virtual sink' : 'Requires VB-CABLE from vb-audio.com'}
+            Installs a virtual audio device on your system
           </div>
           <button class="btn-primary" id="install-driver-btn" onClick={async (e) => {
             const btn = e.currentTarget as HTMLButtonElement;
