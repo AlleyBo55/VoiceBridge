@@ -30,6 +30,21 @@ VoiceBridge captures your microphone, transcribes your speech, translates it thr
 
 ---
 
+## Prerequisites
+
+| Requirement | macOS | Ubuntu/Linux | Windows |
+|------------|-------|-------------|---------|
+| Node.js 18+ | [nodejs.org](https://nodejs.org) | `sudo apt install nodejs npm` | [nodejs.org](https://nodejs.org) |
+| ffmpeg | `brew install ffmpeg` | `sudo apt install ffmpeg` | [ffmpeg.org/download](https://ffmpeg.org/download.html) |
+| Homebrew | [brew.sh](https://brew.sh) | — | — |
+| PulseAudio/PipeWire | — | Pre-installed on Ubuntu 22.04+ | — |
+| ElevenLabs API key | [elevenlabs.io](https://elevenlabs.io) | [elevenlabs.io](https://elevenlabs.io) | [elevenlabs.io](https://elevenlabs.io) |
+| LLM API key | [openrouter.ai](https://openrouter.ai) / [openai.com](https://platform.openai.com) / [anthropic.com](https://console.anthropic.com) | same | same |
+
+ffmpeg is required for real-time mic capture and virtual mic audio output. Without it, VoiceBridge falls back to a silent mock (no audio).
+
+---
+
 ## The Pipeline
 
 ```
@@ -44,11 +59,11 @@ Five stages. Under 1.5 seconds. Works everywhere.
 
 | Stage | What Happens | Technology | Latency |
 |-------|-------------|-----------|---------|
-| Capture | Real mic audio captured via native addon | N-API (napi-rs) + OS audio API | 10ms |
+| Capture | Real mic audio captured via ffmpeg | avfoundation (macOS) / pulse (Linux) / dshow (Windows) | 10ms |
 | Transcribe | Speech becomes text in real-time | ElevenLabs Scribe v2 Realtime | 150ms |
 | Translate | Text translated token-by-token | OpenAI / Anthropic / OpenRouter | 300ms |
 | Synthesize | Translated text becomes speech in your voice | ElevenLabs Flash v2.5 TTS | 75ms |
-| Output | Translated audio written to virtual mic | Native audio driver | 10ms |
+| Output | Translated audio written to virtual mic | ffmpeg → BlackHole / PulseAudio / VB-CABLE | 10ms |
 
 ---
 
@@ -69,11 +84,11 @@ Five stages. Under 1.5 seconds. Works everywhere.
 │  └────────┬─────────┘   └─────────────────────────┘  │
 │           │                                           │
 │  ┌────────▼─────────┐                                 │
-│  │  Native Addon     │                                 │
-│  │  (napi-rs / Rust) │                                 │
+│  │  Audio I/O        │                                 │
+│  │  (ffmpeg)         │                                 │
 │  │                    │                                 │
 │  │  • Mic Capture     │                                 │
-│  │  • Virtual Mic     │                                 │
+│  │  • Virtual Mic Out │                                 │
 │  │  • Resampling      │                                 │
 │  └────────┬───────────┘                                 │
 └───────────┼─────────────────────────────────────────────┘
@@ -141,7 +156,19 @@ OLED blacks. Space Mono labels. Mechanical toggles. System tray app that stays o
 
 ## Quick Start
 
-### 1. Clone and install
+### 1. Install prerequisites
+
+```bash
+# macOS
+brew install ffmpeg
+
+# Ubuntu/Debian
+sudo apt install ffmpeg
+
+# Windows — download from https://ffmpeg.org/download.html and add to PATH
+```
+
+### 2. Clone and install
 
 ```bash
 git clone https://github.com/AlleyBo55/VoiceBridge.git
@@ -149,14 +176,13 @@ cd VoiceBridge/desktop
 npm install
 ```
 
-### 2. Build and run
+### 3. Build and run
 
 ```bash
-npm run build
-npm start
+npm run dev
 ```
 
-### 3. Enter your API keys
+### 4. Enter your API keys
 
 On first launch, VoiceBridge walks you through onboarding:
 
@@ -165,7 +191,7 @@ On first launch, VoiceBridge walks you through onboarding:
 
 Keys are encrypted with AES-GCM-256 and stored only on your device. VoiceBridge has no server — we never see your keys. You can change everything later in Settings.
 
-### 4. Install the virtual mic driver
+### 5. Install the virtual mic driver
 
 Click "Install Driver" in the main window. This is a one-time setup:
 - **macOS**: Installs BlackHole 2ch via Homebrew (~30 seconds)
@@ -174,7 +200,7 @@ Click "Install Driver" in the main window. This is a one-time setup:
 
 If it fails, the app shows the exact error and how to fix it.
 
-### 5. Use it
+### 6. Use it
 
 1. Open any meeting app → select "BlackHole 2ch" (macOS) or "VoiceBridge Mic" (Linux) as your microphone
 3. Toggle translation on in the VoiceBridge tray app
@@ -195,7 +221,8 @@ If it fails, the app shows the exact error and how to fix it.
 |-------|--------|-----|
 | App Shell | Electron | Cross-platform desktop, native addon support |
 | UI | Preact + CSS Custom Properties | 3KB gzipped, Nothing design system |
-| Native Audio | napi-rs (Rust) | Safe, fast, cross-compiles per OS |
+| Audio I/O | ffmpeg (avfoundation / pulse / dshow) | Real mic capture + virtual mic output, cross-platform |
+| Virtual Mic | BlackHole (macOS) / PulseAudio (Linux) / VB-CABLE (Windows) | OS-level virtual audio device |
 | STT | ElevenLabs Scribe v2 Realtime | 150ms latency, 90+ languages |
 | TTS | ElevenLabs Flash v2.5 | 75ms latency, voice cloning |
 | Translation | OpenAI / Anthropic / OpenRouter | Streaming, contextual, 200+ models |

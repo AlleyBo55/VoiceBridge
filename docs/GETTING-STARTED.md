@@ -3,10 +3,29 @@
 ## Prerequisites
 
 - Node.js 18+ and npm
+- ffmpeg (required for real-time audio capture and output)
 - macOS 12+, Ubuntu 22.04+, or Windows 10+
 - An ElevenLabs account ([elevenlabs.io](https://elevenlabs.io))
 - An LLM API key (OpenAI, Anthropic, or OpenRouter)
 - macOS only: [Homebrew](https://brew.sh) (for virtual mic driver)
+
+### Install ffmpeg
+
+```bash
+# macOS
+brew install ffmpeg
+
+# Ubuntu/Debian
+sudo apt install ffmpeg
+
+# Fedora
+sudo dnf install ffmpeg
+
+# Windows — download from https://ffmpeg.org/download.html
+# Extract, add the bin/ folder to your PATH
+```
+
+ffmpeg handles real-time mic capture and audio output to the virtual microphone. Without it, VoiceBridge cannot capture or output audio.
 
 ## Installation
 
