@@ -362,9 +362,11 @@ export class DesktopPipeline {
     this.#latencyMonitor.markSTTEnd(this.#currentSequenceId);
     this.#emitStage(this.#currentSequenceId, 'TRANSCRIBED');
 
-    // Send to translation → TTS (reconnect TTS if needed)
+    // Send to translation → TTS (reconnect TTS if needed and wait for it to be ready)
     if (!this.#ttsWs || this.#ttsWs.readyState !== WebSocket.OPEN) {
       await this.#connectTTS();
+      // Wait for TTS to process init message before sending text
+      await new Promise(r => setTimeout(r, 500));
     }
     this.#translateAndSpeak(newText, this.#currentSequenceId);
 
