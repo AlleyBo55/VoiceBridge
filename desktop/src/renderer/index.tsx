@@ -353,9 +353,12 @@ function OnboardingView({ onComplete }: { onComplete: () => void }) {
     setError('');
     try {
       const blob = new Blob(recordedChunks, { type: 'audio/webm' });
-      // Convert blob to base64 for IPC transfer
+      // Convert blob to base64 for IPC transfer (chunked to avoid stack overflow)
       const arrayBuffer = await blob.arrayBuffer();
-      const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+      const bytes = new Uint8Array(arrayBuffer);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]!);
+      const base64 = btoa(binary);
 
       await vb.stopRecording(base64);
       const id = await vb.uploadVoice();
@@ -714,7 +717,10 @@ function SettingsView({ onBack }: { onBack: () => void }) {
     try {
       const blob = new Blob(recordedChunks, { type: 'audio/webm' });
       const buf = await blob.arrayBuffer();
-      const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+      const bytes = new Uint8Array(buf);
+      let bin = '';
+      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]!);
+      const b64 = btoa(bin);
       await vb.stopRecording(b64); await vb.uploadVoice();
       setRecordedChunks([]); setRecordingDuration(0); await refreshVoices();
     } catch (err) { setError(err instanceof Error ? err.message : 'Upload failed'); }
