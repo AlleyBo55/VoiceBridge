@@ -123,9 +123,14 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
   }
 
   /** Write PCM audio to the virtual mic (BlackHole / PulseAudio sink). */
+  #outputChunkCount = 0;
   writeVirtualMic(pcm: Buffer): void {
     if (!this.#outputProcess || this.#outputProcess.killed) {
       this.#startOutputProcess();
+    }
+    this.#outputChunkCount++;
+    if (this.#outputChunkCount <= 3 || this.#outputChunkCount % 50 === 0) {
+      console.log(`[Audio] Writing ${pcm.length} bytes to virtual mic (chunk #${this.#outputChunkCount})`);
     }
     try {
       this.#outputProcess?.stdin?.write(pcm);
@@ -216,7 +221,7 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
       args = [
         '-f', 's16le', '-ar', '48000', '-ac', '1', '-i', 'pipe:0',
         '-f', 'audiotoolbox', '-audio_device_index', String(bhIdx),
-        '-',
+        '',
       ];
     } else if (process.platform === 'linux') {
       args = [
@@ -246,13 +251,19 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
 
   #findBlackHoleIndex(): number | null {
     try {
-      const out = execSync('ffmpeg -f avfoundation -list_devices true -i "" 2>&1 || true', { encoding: 'utf8', timeout: 5000 });
-      let inAudio = false;
+      // List audiotoolbox output devices (different indices from avfoundation input)
+      const out = execSync(
+        'ffmpeg -f s16le -ar 48000 -ac 1 -i /dev/zero -t 0.01 -f audiotoolbox -list_devices true "" 2>&1 || true',
+        { encoding: 'utf8', timeout: 5000 }
+      );
       for (const line of out.split('\n')) {
-        if (line.includes('AVFoundation audio devices')) { inAudio = true; continue; }
-        if (inAudio && line.toLowerCase().includes('blackhole')) {
+        if (line.toLowerCase().includes('blackhole')) {
           const match = line.match(/\[(\d+)]/);
-          if (match) return parseInt(match[1] ?? '0', 10);
+          if (match) {
+            const idx = parseInt(match[1] ?? '0', 10);
+            console.log(`[Audio] Found BlackHole at audiotoolbox device index ${idx}`);
+            return idx;
+          }
         }
       }
     } catch {}
