@@ -38,7 +38,6 @@ export interface NativeAudioAddon {
 
 export class FfmpegNativeAddon implements NativeAudioAddon {
   #captureProcess: ChildProcess | null = null;
-  #outputProcess: ChildProcess | null = null;
   #sequenceId = 0;
   #capturing = false;
 
@@ -129,49 +128,18 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
 
   /** Write PCM audio to the virtual mic (BlackHole / PulseAudio sink). */
   #outputChunkCount = 0;
-  #outputDraining = false;
-  #outputQueue: Buffer[] = [];
 
   writeVirtualMic(pcm: Buffer): void {
-    if (!this.#outputProcess || this.#outputProcess.killed || !this.#outputProcess.stdin?.writable) {
-      this.#startOutputProcess();
-    }
     this.#outputChunkCount++;
     if (this.#outputChunkCount <= 5 || this.#outputChunkCount % 20 === 0) {
       console.log(`[Audio] Writing ${pcm.length} bytes to virtual mic (chunk #${this.#outputChunkCount})`);
     }
 
-    // If draining, queue the data
-    if (this.#outputDraining) {
-      this.#outputQueue.push(pcm);
-      return;
-    }
-
-    try {
-      const ok = this.#outputProcess?.stdin?.write(pcm);
-      // Also play through speakers via afplay (temp WAV file)
-      this.#playThroughSpeaker(pcm);
-      if (!ok) {
-        this.#outputDraining = true;
-        this.#outputProcess?.stdin?.once('drain', () => {
-          this.#outputDraining = false;
-          // Flush queued data
-          while (this.#outputQueue.length > 0 && !this.#outputDraining) {
-            const queued = this.#outputQueue.shift()!;
-            const ok2 = this.#outputProcess?.stdin?.write(queued);
-            if (!ok2) {
-              this.#outputDraining = true;
-              this.#outputProcess?.stdin?.once('drain', () => { this.#outputDraining = false; });
-              break;
-            }
-          }
-        });
-      }
-    } catch(_e) {
-      console.error('[Audio] Write failed, restarting output process');
-      this.#startOutputProcess();
-      try { this.#outputProcess?.stdin?.write(pcm); } catch(_e2) {}
-    }
+    // Write as temp WAV and play with a short-lived ffmpeg → BlackHole
+    // No persistent pipe = no buffering = immediate playback
+    this.#playToBlackHole(pcm);
+    // Also play through speakers via afplay
+    this.#playThroughSpeaker(pcm);
   }
 
   isDriverInstalled(): boolean { return false; }
@@ -238,76 +206,42 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
     ];
   }
 
-  #startOutputProcess(): void {
-    if (this.#outputProcess && !this.#outputProcess.killed) {
-      this.#outputProcess.kill('SIGTERM');
-    }
-    // Also kill speaker monitor if running
-    if (this.#speakerProcess && !this.#speakerProcess.killed) {
-      this.#speakerProcess.kill('SIGTERM');
-    }
+  #bhIdx: number | null = null;
 
-    let args: string[];
-
+  /** Play PCM to BlackHole via a short-lived ffmpeg (no persistent pipe = no buffering) */
+  #playToBlackHole(pcm: Buffer): void {
     if (process.platform === 'darwin') {
-      // Find BlackHole device index
-      const bhIdx = this.#findBlackHoleIndex();
-      if (bhIdx === null) {
-        console.error('[Audio] BlackHole device not found — cannot output');
-        return;
+      if (this.#bhIdx === null) {
+        this.#bhIdx = this.#findBlackHoleIndex();
+        if (this.#bhIdx === null) {
+          console.error('[Audio] BlackHole device not found — cannot output');
+          return;
+        }
+        console.log(`[Audio] Found BlackHole at audiotoolbox device index ${this.#bhIdx}`);
       }
-      // Use tee filter to split audio: one copy to BlackHole, one to default speaker
-      // This lets you hear the output AND send it to the virtual mic
-      args = [
-        '-y',
-        '-f', 's16le', '-ar', '48000', '-ac', '1', '-i', 'pipe:0',
-        '-f', 'audiotoolbox', '-audio_device_index', String(bhIdx),
+      // Spawn a short-lived ffmpeg that reads the PCM from stdin and plays to BlackHole
+      const proc = spawn('ffmpeg', [
+        '-y', '-f', 's16le', '-ar', '48000', '-ac', '1', '-i', 'pipe:0',
+        '-f', 'audiotoolbox', '-audio_device_index', String(this.#bhIdx),
         '',
-      ];
+      ], { stdio: ['pipe', 'ignore', 'ignore'] });
+      proc.stdin?.on('error', () => {});
+      proc.on('error', () => {});
+      try {
+        proc.stdin?.write(pcm);
+        proc.stdin?.end(); // Signal EOF — ffmpeg will play and exit
+      } catch(_e) {}
     } else if (process.platform === 'linux') {
-      args = [
+      const proc = spawn('ffmpeg', [
         '-f', 's16le', '-ar', '48000', '-ac', '1', '-i', 'pipe:0',
         '-f', 'pulse', 'voicebridge',
-      ];
-    } else {
-      args = [
-        '-f', 's16le', '-ar', '48000', '-ac', '1', '-i', 'pipe:0',
-        '-f', 'dshow', 'audio=CABLE Input',
-      ];
-    }
-
-    console.log('[Audio] Starting output:', 'ffmpeg', args.join(' '));
-    this.#outputProcess = spawn('ffmpeg', args, {
-      stdio: ['pipe', 'ignore', 'pipe'],
-    });
-
-    this.#outputProcess.stdin?.on('error', (err) => {
-      console.error('[Audio] Output stdin error:', err.message);
-    });
-
-    this.#outputProcess.stderr?.on('data', (data: Buffer) => {
-      const msg = data.toString().trim();
-      if (msg && !msg.includes('size=')) {
-        console.log('[Audio] ffmpeg output:', msg.slice(0, 200));
-      }
-    });
-
-    this.#outputProcess.on('error', (err) => {
-      console.error('[Audio] Output process error:', err.message);
-    });
-
-    this.#outputProcess.on('close', (code) => {
-      console.log('[Audio] Output process exited:', code);
-    });
-
-    // Also start a speaker monitor so you can hear the TTS output during dev/testing
-    if (process.platform === 'darwin') {
-      this.#startSpeakerMonitor();
+      ], { stdio: ['pipe', 'ignore', 'ignore'] });
+      proc.stdin?.on('error', () => {});
+      try { proc.stdin?.write(pcm); proc.stdin?.end(); } catch(_e) {}
     }
   }
 
   // Speaker playback — plays TTS audio through default speakers using afplay (macOS built-in)
-  #speakerProcess: ChildProcess | null = null;
   #speakerPlayCount = 0;
 
   /** Write raw PCM to a temp WAV file and play it with afplay (immediate, no buffering) */
@@ -350,10 +284,6 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
     } catch(_e) {
       console.error('[Audio] Speaker playback failed');
     }
-  }
-
-  #startSpeakerMonitor(): void {
-    // No-op — we use afplay per-chunk now
   }
 
   /** Resolve a device name (or index string) to the current avfoundation audio index */
@@ -413,17 +343,8 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
 
   destroy(): void {
     this.stopCapture();
-    if (this.#outputProcess && !this.#outputProcess.killed) {
-      this.#outputProcess.kill('SIGTERM');
-      this.#outputProcess = null;
-    }
-    if (this.#speakerProcess && !this.#speakerProcess.killed) {
-      this.#speakerProcess.kill('SIGTERM');
-      this.#speakerProcess = null;
-    }
     this.#outputChunkCount = 0;
-    this.#outputDraining = false;
-    this.#outputQueue = [];
+    this.#bhIdx = null;
   }
 }
 
