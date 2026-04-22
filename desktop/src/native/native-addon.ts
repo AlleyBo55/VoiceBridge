@@ -321,12 +321,6 @@ export class MockNativeAddon implements NativeAudioAddon {
     }
     return output;
   }
-      const high = Math.min(low + 1, inputSamples - 1);
-      const frac = srcIndex - low;
-      output.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(pcm.readInt16LE(low * 2) * (1 - frac) + pcm.readInt16LE(high * 2) * frac))), i * 2);
-    }
-    return output;
-  }
 }
 
 // ── Factory ─────────────────────────────────────────────────
