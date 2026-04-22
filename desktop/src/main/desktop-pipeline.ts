@@ -14,7 +14,7 @@ import type {
   SessionState, VADState, ServiceConnectionState,
   PipelineStage, DegradationLevel, EchoState,
 } from '../shared/types.js';
-import { AudioRouter } from './audio-router.js';
+import { AudioRouter, computeRmsDb } from './audio-router.js';
 import { DesktopSettingsStore } from './desktop-settings-store.js';
 import { sendToRenderer } from './electron-ipc.js';
 import { DesktopDebugLog } from './desktop-debug-log.js';
@@ -138,7 +138,12 @@ export class DesktopPipeline {
     const ghostMode = await this.#settings.get('ghostMode');
     const deviceId = await this.#settings.get('selectedMicDeviceId');
 
+    let audioChunkCount = 0;
     this.#audioRouter.onRawAudioChunk = (chunk: Int16Array) => {
+      audioChunkCount++;
+      if (audioChunkCount === 1 || audioChunkCount % 20 === 0) {
+        this.#debugLog.log('info', 'audio', `Sending chunk #${audioChunkCount} to STT (${chunk.length} samples, rms=${computeRmsDb(chunk).toFixed(1)}dB)`);
+      }
       this.#sendAudioToSTT(chunk);
     };
     this.#audioRouter.onSpeechEnd = () => this.#handleSpeechEnd();

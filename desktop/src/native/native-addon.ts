@@ -71,7 +71,10 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
   }
 
   getDefaultInputDevice(): AudioDeviceInfo | null {
-    return this.enumerateInputDevices()[0] ?? null;
+    const devices = this.enumerateInputDevices();
+    // Skip virtual devices (BlackHole, VB-Cable) — prefer real mic
+    const realMic = devices.find(d => !d.name.toLowerCase().includes('blackhole') && !d.name.toLowerCase().includes('cable'));
+    return realMic ?? devices[0] ?? null;
   }
 
   startCapture(deviceId: string, config: CaptureConfig): void {
