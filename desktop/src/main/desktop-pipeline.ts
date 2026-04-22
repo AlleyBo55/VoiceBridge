@@ -317,7 +317,10 @@ export class DesktopPipeline {
 
     // Extract only the NEW text since last translation
     const fullText = this.#lastPartialText.trim();
-    if (!fullText || fullText.length <= this.#processedTextLength) { return; }
+    if (!fullText || fullText.length <= this.#processedTextLength) {
+      this.#debugLog.log('info', 'pipeline', `Speech-end but no new text (full=${fullText.length}, processed=${this.#processedTextLength})`);
+      return;
+    }
 
     const newText = fullText.slice(this.#processedTextLength).trim();
     if (!newText) { return; }
@@ -567,6 +570,10 @@ export class DesktopPipeline {
         this.#emitStage(this.#currentSequenceId, 'PLAYED');
         this.#debugLog.log('info', 'pipeline', `Utterance ${this.#currentSequenceId} played (${this.#ttsMessageCount} TTS messages)`);
         this.#ttsMessageCount = 0;
+
+        // Pre-connect next TTS session immediately so it's ready for the next utterance
+        this.#debugLog.log('info', 'connection', 'Pre-connecting TTS for next utterance...');
+        this.#connectTTS().catch((_e3) => {});
       }
 
       return;
