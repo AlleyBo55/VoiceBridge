@@ -265,25 +265,31 @@ export class DesktopPipeline {
 
   #handleSTTMessage(data: string): void {
     try {
-      const msg = JSON.parse(data) as { type: string; text?: string; language?: string; code?: string; message?: string };
+      const msg = JSON.parse(data) as Record<string, unknown>;
 
-      this.#debugLog.log('info', 'pipeline', `STT event: ${msg.type}${msg.text ? ` "${msg.text.slice(0, 60)}"` : ''}${msg.code ? ` [${msg.code}]` : ''}`);
+      // Log raw message structure for debugging
+      const msgType = (msg['type'] ?? msg['message_type'] ?? msg['event'] ?? 'unknown') as string;
+      const text = (msg['text'] ?? '') as string;
+      this.#debugLog.log('info', 'pipeline', `STT raw: ${msgType} ${text ? `"${text.slice(0, 60)}"` : ''} keys=[${Object.keys(msg).join(',')}]`);
 
-      if (msg.type === 'partial_transcript' && msg.text) {
+      // Handle different field naming conventions
+      const type = msgType;
+
+      if ((type === 'partial_transcript' || type === 'partial') && text) {
         this.#debugLog.log('info', 'pipeline', `STT partial: "${msg.text.slice(0, 50)}"`);
       }
 
-      if ((msg.type === 'committed_transcript' || msg.type === 'committed_transcript_with_timestamps') && msg.text) {
-        const text = msg.text.trim();
-        if (!text) return;
+      if ((type === 'committed_transcript' || type === 'committed_transcript_with_timestamps' || type === 'final' || type === 'committed') && text) {
+        const finalText = text.trim();
+        if (!finalText) return;
 
-        this.#debugLog.log('info', 'pipeline', `STT final: "${text}"`);
+        this.#debugLog.log('info', 'pipeline', `STT final: "${finalText}"`);
         this.#latencyMonitor.markSTTEnd(this.#currentSequenceId);
 
         this.#emitStage(this.#currentSequenceId, 'TRANSCRIBED');
 
         // Feed to translation
-        this.#translateAndSpeak(text, this.#currentSequenceId);
+        this.#translateAndSpeak(finalText, this.#currentSequenceId);
       }
     } catch {
       this.#debugLog.log('error', 'pipeline', 'STT message parse error');
