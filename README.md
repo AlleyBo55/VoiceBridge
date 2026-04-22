@@ -285,11 +285,50 @@ MIT — use it, fork it, ship it.
 
 ---
 
+## Built With Spec-Driven Development
+
+This entire project was built using [Kiro](https://kiro.dev)'s spec-driven development — you write specifications for what you want to build, and the AI agent helps you implement them systematically. Every feature started as a requirement, became a design, then became code. No guessing. No "let me just hack this together." Every decision is documented, every state machine is specified, every correctness property is testable.
+
+Here's the thing about building software: most people start coding and figure out the architecture later. We did the opposite. We wrote the spec first. Then we built exactly what the spec said. And when the spec was wrong — when Chrome extensions couldn't create virtual microphones — we wrote a new spec and rebuilt.
+
+That's not slower. That's faster. Because you never build the wrong thing twice.
+
+### The Specs
+
+Every document that drove this project is open and readable:
+
+**Phase 1 — Chrome Extension (Core Pipeline)**
+- [Requirements](.kiro/specs/voice-translate-chrome-extension/requirements.md) — 34 requirements, 200+ acceptance criteria
+- [Design](.kiro/specs/voice-translate-chrome-extension/design.md) — system architecture, state machines, WebSocket protocols, data models
+- [Tasks](.kiro/specs/voice-translate-chrome-extension/tasks.md) — 30 implementation tasks
+
+**Phase 2 — Pipeline Hardening**
+- [Requirements](.kiro/specs/pipeline-hardening/requirements.md) — 10 requirements for production-quality pipeline
+- [Design](.kiro/specs/pipeline-hardening/design.md) — 7 new components, 15 correctness properties
+- [Tasks](.kiro/specs/pipeline-hardening/tasks.md) — 18 tasks with checkpoints
+
+**Phase 3 — Desktop App Rewrite (Virtual Microphone)**
+- [Requirements](.kiro/specs/desktop-app-rewrite/requirements.md) — 12 requirements for cross-platform desktop app
+- [Design](.kiro/specs/desktop-app-rewrite/design.md) — Electron + N-API architecture, 21 correctness properties
+- [Tasks](.kiro/specs/desktop-app-rewrite/tasks.md) — 19 tasks, 48 sub-tasks
+
+### The Hackathon
+
+Built for [ElevenLabs × Kiro Hackathon (Hack #5)](https://hacks.elevenlabs.io/hackathons/4) — a weekly hackathon challenging developers to build AI-powered apps using Kiro's spec-driven development and ElevenLabs APIs.
+
+The challenge: *"Build an AI-powered app using Kiro's spec-driven development and ElevenLabs APIs."*
+
+We built a real-time voice translator that clones your voice and speaks in any language. In under two seconds. Using a virtual microphone that works in every meeting app on every operating system.
+
+We didn't just use the APIs. We pushed them to their limits — Scribe v2 Realtime for 150ms speech-to-text, Flash v2.5 for 75ms voice synthesis, clause-level chunking for faster-than-sentence translation. And we documented every decision in specs that anyone can read, fork, and build on.
+
+---
+
 <p align="center">
   <br>
   <em>"The people who are crazy enough to think they can change the world are the ones who do."</em>
   <br><br>
   Built for <a href="https://hacks.elevenlabs.io/hackathons/4">ElevenLabs × Kiro Hackathon</a>
   <br>
-  <a href="https://elevenlabs.io">ElevenLabs</a> · <a href="https://kiro.dev">Kiro</a>
+  <a href="https://elevenlabs.io">ElevenLabs</a> · <a href="https://kiro.dev">Kiro</a> · <a href="https://hacks.elevenlabs.io/hackathons/4?sc_channel=sm&sc_publisher=TWITTER&sc_country=global&sc_geo=GLOBAL&sc_outcome=awareness">#ElevenHacks</a> · <a href="https://x.com/kirodotdev">#CodeWithKiro</a>
 </p>
