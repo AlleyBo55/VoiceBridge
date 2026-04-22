@@ -184,14 +184,16 @@ export class DesktopPipeline {
     this.#emitSessionState();
 
     // Start STT watchdog — reconnect if no messages for 10s
+    // Only active in VAD mode (PTT off). In PTT mode, silence between presses is normal.
     this.#sttWatchdog = setInterval(() => {
       if (!this.#sessionActive) return;
+      // Skip watchdog in PTT mode — silence is expected when not pressing
+      if (this.#pttEnabled) return;
       const silentMs = Date.now() - this.#lastSttMessageAt;
       if (this.#lastSttMessageAt > 0 && silentMs > 10000 && this.#sttWs) {
         this.#debugLog.log('warn', 'connection', `STT silent for ${(silentMs / 1000).toFixed(0)}s — forcing reconnect`);
         try { this.#sttWs.close(); } catch(_e) {}
         this.#sttWs = null;
-        // close handler will auto-reconnect
       }
     }, 3000);
 
@@ -260,6 +262,14 @@ export class DesktopPipeline {
     this.#pttActive = false;
     this.#commitSTT();
     this.#debugLog.log('info', 'pipeline', 'PTT released — mic closed');
+    // Reconnect STT after commit so next press starts fresh (no accumulated buffer)
+    setTimeout(() => {
+      if (this.#sessionActive && this.#sttWs) {
+        try { this.#sttWs.close(); } catch(_e) {}
+        this.#sttWs = null;
+        // close handler auto-reconnects
+      }
+    }, 1500); // Wait 1.5s for committed_transcript to arrive before closing
   }
 
   isPTTEnabled(): boolean { return this.#pttEnabled; }

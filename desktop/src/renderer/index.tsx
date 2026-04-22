@@ -1358,6 +1358,11 @@ function App() {
               const val = (e.target as HTMLSelectElement).value;
               dispatch({ type: 'SET_LANGUAGES', source: val, target: state.targetLanguage });
               await vb.setSetting('sourceLanguage', val);
+              // Restart session with new language if active
+              if (state.sessionActive) {
+                await vb.stopSession('language-change');
+                await vb.startSession({ sourceLanguage: val, targetLanguage: state.targetLanguage });
+              }
             }}>
             <option value="auto">Auto-detect</option>
             {STT_LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
@@ -1372,6 +1377,11 @@ function App() {
               const val = (e.target as HTMLSelectElement).value;
               dispatch({ type: 'SET_LANGUAGES', source: state.sourceLanguage, target: val });
               await vb.setSetting('targetLanguage', val);
+              // Restart session with new language if active
+              if (state.sessionActive) {
+                await vb.stopSession('language-change');
+                await vb.startSession({ sourceLanguage: state.sourceLanguage, targetLanguage: val });
+              }
             }}>
             {TTS_LANGUAGES.filter(l => l.code !== state.sourceLanguage).map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
           </select>
