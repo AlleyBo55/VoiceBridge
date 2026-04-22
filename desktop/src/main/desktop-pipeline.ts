@@ -100,6 +100,8 @@ export class DesktopPipeline {
     this.#currentSequenceId = 0;
     this.#sourceLanguage = params.sourceLanguage;
     this.#targetLanguage = params.targetLanguage;
+    this.#lastPartialText = '';
+    this.#processedTextLength = 0;
 
     // Load settings
     this.#apiKey = await this.#settings.get('elevenLabsApiKey');
@@ -270,7 +272,7 @@ export class DesktopPipeline {
 
   // Track latest partial for speech-end trigger
   #lastPartialText = '';
-  #lastTranslatedText = '';
+  #processedTextLength = 0; // How many chars of the accumulated STT text we've already translated
 
   #handleSTTMessage(data: string): void {
     try {
@@ -283,13 +285,16 @@ export class DesktopPipeline {
       }
 
       if (msgType === 'committed_transcript' || msgType === 'committed_transcript_with_timestamps') {
-        const finalText = (text || this.#lastPartialText).trim();
-        if (finalText && finalText !== this.#lastTranslatedText) {
-          this.#lastTranslatedText = finalText;
-          this.#debugLog.log('info', 'pipeline', `STT committed: "${finalText.slice(0, 80)}"`);
-          this.#latencyMonitor.markSTTEnd(this.#currentSequenceId);
-          this.#emitStage(this.#currentSequenceId, 'TRANSCRIBED');
-          this.#translateAndSpeak(finalText, this.#currentSequenceId);
+        const fullText = (text || this.#lastPartialText).trim();
+        if (fullText && fullText.length > this.#processedTextLength) {
+          const newText = fullText.slice(this.#processedTextLength).trim();
+          if (newText) {
+            this.#processedTextLength = fullText.length;
+            this.#debugLog.log('info', 'pipeline', `STT committed (new): "${newText.slice(0, 80)}"`);
+            this.#latencyMonitor.markSTTEnd(this.#currentSequenceId);
+            this.#emitStage(this.#currentSequenceId, 'TRANSCRIBED');
+            this.#translateAndSpeak(newText, this.#currentSequenceId);
+          }
         }
         this.#lastPartialText = '';
       }
@@ -302,7 +307,7 @@ export class DesktopPipeline {
     }
   }
 
-  #handleSpeechEnd(): void {
+  async #handleSpeechEnd(): Promise<void> {
     if (!this.#sessionActive) return;
     this.#currentSequenceId++;
     this.#totalUtterances++;
@@ -310,16 +315,26 @@ export class DesktopPipeline {
     this.#latencyMonitor.markCaptureEnd(this.#currentSequenceId);
     this.#emitStage(this.#currentSequenceId, 'CAPTURED');
 
-    // If we have a partial transcript that hasn't been committed yet, use it directly
-    const pendingText = this.#lastPartialText.trim();
-    if (pendingText && pendingText !== this.#lastTranslatedText) {
-      this.#lastTranslatedText = pendingText;
-      this.#lastPartialText = '';
-      this.#debugLog.log('info', 'pipeline', `STT (from partial): "${pendingText.slice(0, 80)}"`);
-      this.#latencyMonitor.markSTTEnd(this.#currentSequenceId);
-      this.#emitStage(this.#currentSequenceId, 'TRANSCRIBED');
-      this.#translateAndSpeak(pendingText, this.#currentSequenceId);
+    // Extract only the NEW text since last translation
+    const fullText = this.#lastPartialText.trim();
+    if (!fullText || fullText.length <= this.#processedTextLength) { return; }
+
+    const newText = fullText.slice(this.#processedTextLength).trim();
+    if (!newText) { return; }
+
+    this.#processedTextLength = fullText.length;
+    this.#lastPartialText = '';
+    this.#debugLog.log('info', 'pipeline', `STT (new): "${newText.slice(0, 80)}"`);
+    this.#latencyMonitor.markSTTEnd(this.#currentSequenceId);
+    this.#emitStage(this.#currentSequenceId, 'TRANSCRIBED');
+
+    // Reconnect TTS if closed (it closes after isFinal)
+    if (!this.#ttsWs || this.#ttsWs.readyState !== WebSocket.OPEN) {
+      this.#debugLog.log('info', 'connection', 'Reconnecting TTS...');
+      await this.#connectTTS();
     }
+
+    this.#translateAndSpeak(newText, this.#currentSequenceId);
 
     // Note: commit not supported on this endpoint — partials are used directly
 
