@@ -1,16 +1,18 @@
 /**
- * Desktop pipeline adapter.
- * Wraps the existing PipelineOrchestrator with Electron-specific wiring.
- * Replaces chrome.runtime.sendMessage with Electron IPC,
- * AudioCaptureModule with AudioRouter + NativeAddon,
- * AudioOutputModule with NativeAddon.writeVirtualMic.
+ * Desktop pipeline — FULL end-to-end wiring.
+ *
+ * Mic → STT (ElevenLabs Scribe) → Translation (LLM) → TTS (ElevenLabs) → BlackHole
+ *
+ * This replaces the Chrome extension's offscreen document pipeline.
+ * All WebSocket and HTTP calls happen in the Electron main process.
+ * Audio capture uses the native addon (mock for now, real mic later).
  */
 
 import type { BrowserWindow } from 'electron';
 import type { NativeAudioAddon } from '../native/native-addon.js';
 import type {
-  SessionState, LatencyMeasurement, DegradationLevel,
-  ServiceConnectionState, PipelineStage, VADState,
+  SessionState, VADState, ServiceConnectionState,
+  PipelineStage, DegradationLevel, EchoState,
 } from '../shared/types.js';
 import { AudioRouter } from './audio-router.js';
 import { DesktopSettingsStore } from './desktop-settings-store.js';
@@ -18,14 +20,24 @@ import { sendToRenderer } from './electron-ipc.js';
 import { DesktopDebugLog } from './desktop-debug-log.js';
 import { DesktopLatencyMonitor } from './desktop-latency.js';
 
+// ── WebSocket polyfill for Node.js ──────────────────────────
+// Electron main process has no browser WebSocket — use the ws package
+// which is bundled with Electron
+const WebSocket = require('ws') as typeof import('ws').default;
+
 // ── Constants ───────────────────────────────────────────────
 
 const DEFAULT_VOICE_ID = 'JBFqnCBsd6RMkjVDRZzb'; // "George" built-in voice
-const STT_TIMEOUT_MS = 5000;
-const TRANSLATION_TIMEOUT_MS = 3000;
-const TTS_TIMEOUT_MS = 3000;
-const MAX_QUEUE_SIZE = 3;
-const MAX_ACTIVE_UTTERANCES = 10;
+const STT_ENDPOINT = 'wss://api.elevenlabs.io/v1/speech-to-text/stream';
+const HEARTBEAT_INTERVAL_MS = 15000;
+const CHUNK_LENGTH_SCHEDULE = [50, 120, 200, 260];
+
+// ── Helpers ─────────────────────────────────────────────────
+
+/** Convert Int16Array PCM to base64 (Node.js compatible) */
+function pcmToBase64(pcm: Int16Array): string {
+  return Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength).toString('base64');
+}
 
 // ── Desktop Pipeline ────────────────────────────────────────
 
@@ -36,11 +48,31 @@ export class DesktopPipeline {
   #mainWindow: BrowserWindow | null;
   #debugLog: DesktopDebugLog;
   #latencyMonitor: DesktopLatencyMonitor;
+
+  // Session state
   #sessionActive = false;
   #sessionStartedAt = 0;
   #totalUtterances = 0;
   #droppedUtterances = 0;
   #currentSequenceId = 0;
+  #sourceLanguage = 'auto';
+  #targetLanguage = 'es';
+
+  // WebSocket connections
+  #sttWs: InstanceType<typeof WebSocket> | null = null;
+  #ttsWs: InstanceType<typeof WebSocket> | null = null;
+  #sttHeartbeat: ReturnType<typeof setInterval> | null = null;
+  #ttsHeartbeat: ReturnType<typeof setInterval> | null = null;
+
+  // Pipeline config (loaded from settings at session start)
+  #apiKey = '';
+  #llmApiKey = '';
+  #llmProvider = 'openrouter';
+  #openRouterModel = 'openai/gpt-4o';
+  #voiceId = DEFAULT_VOICE_ID;
+  #voiceStability = 0.5;
+  #voiceSimilarityBoost = 0.75;
+  #voiceStyle = 0.3;
 
   constructor(
     nativeAddon: NativeAudioAddon,
@@ -56,17 +88,66 @@ export class DesktopPipeline {
     this.#audioRouter = new AudioRouter(nativeAddon);
   }
 
-  /** Start a translation session. */
+  // ── Public API ──────────────────────────────────────────────
+
   async startSession(params: { sourceLanguage: string; targetLanguage: string }): Promise<void> {
+    if (this.#sessionActive) return;
+
     this.#sessionActive = true;
     this.#sessionStartedAt = Date.now();
     this.#totalUtterances = 0;
     this.#droppedUtterances = 0;
     this.#currentSequenceId = 0;
+    this.#sourceLanguage = params.sourceLanguage;
+    this.#targetLanguage = params.targetLanguage;
 
+    // Load settings
+    this.#apiKey = await this.#settings.get('elevenLabsApiKey');
+    this.#llmApiKey = await this.#settings.get('llmApiKey');
+    this.#llmProvider = await this.#settings.get('llmProvider');
+    this.#openRouterModel = await this.#settings.get('openRouterModel');
+    const profileId = await this.#settings.get('voiceProfileId');
+    this.#voiceId = profileId || DEFAULT_VOICE_ID;
+    this.#voiceStability = await this.#settings.get('voiceStability');
+    this.#voiceSimilarityBoost = await this.#settings.get('voiceSimilarityBoost');
+    this.#voiceStyle = await this.#settings.get('voiceStyle');
+
+    if (!this.#apiKey) {
+      this.#debugLog.log('error', 'pipeline', 'No ElevenLabs API key — cannot start session');
+      this.#sessionActive = false;
+      return;
+    }
+
+    // 1. Connect STT WebSocket
+    this.#debugLog.log('info', 'pipeline', 'Connecting STT...');
+    this.#emitConnectionState('stt', { status: 'connecting', attempt: 0 });
+    await this.#connectSTT();
+
+    // 2. Connect TTS WebSocket
+    this.#debugLog.log('info', 'pipeline', 'Connecting TTS...');
+    this.#emitConnectionState('tts', { status: 'connecting', attempt: 0 });
+    await this.#connectTTS();
+
+    // 3. Mark LLM as connected (it's HTTP, always available if key exists)
+    if (this.#llmApiKey) {
+      this.#emitConnectionState('llm', { status: 'connected' });
+    }
+
+    // 4. Start audio capture
     const noiseGate = await this.#settings.get('noiseGateThresholdDb');
     const ghostMode = await this.#settings.get('ghostMode');
     const deviceId = await this.#settings.get('selectedMicDeviceId');
+
+    this.#audioRouter.onAudioChunk = (chunk: Int16Array, _seq: number) => {
+      this.#sendAudioToSTT(chunk);
+    };
+    this.#audioRouter.onSpeechEnd = () => this.#handleSpeechEnd();
+    this.#audioRouter.onVADStateChange = (state: VADState) => {
+      sendToRenderer(this.#mainWindow, 'audio:level', {
+        rmsDb: this.#audioRouter.getInputLevel(),
+        vadState: state.status,
+      });
+    };
 
     this.#audioRouter.start({
       captureDeviceId: deviceId,
@@ -78,54 +159,139 @@ export class DesktopPipeline {
       ghostModeEnabled: ghostMode,
     });
 
-    // Wire audio router callbacks
-    this.#audioRouter.onSpeechEnd = () => this.#handleSpeechEnd();
-    this.#audioRouter.onVADStateChange = (state: VADState) => {
-      sendToRenderer(this.#mainWindow, 'audio:level', {
-        rmsDb: this.#audioRouter.getInputLevel(),
-        vadState: state.status,
-      });
-    };
-
     this.#audioRouter.transitionRouting({ type: 'session_start' });
-    this.#emitSessionState(params.sourceLanguage, params.targetLanguage);
+    this.#emitSessionState();
 
     this.#debugLog.log('info', 'pipeline', 'Session started', {
-      source: params.sourceLanguage,
-      target: params.targetLanguage,
+      source: params.sourceLanguage, target: params.targetLanguage,
+      voiceId: this.#voiceId, llmProvider: this.#llmProvider,
     });
   }
 
-  /** Stop the current session. */
   async stopSession(reason: string): Promise<void> {
     if (!this.#sessionActive) return;
     this.#sessionActive = false;
 
+    this.#debugLog.log('info', 'pipeline', `Session stopping: ${reason}`);
+
+    // Stop audio
     this.#audioRouter.transitionRouting({ type: 'session_stop' });
     this.#audioRouter.stop();
-    this.#latencyMonitor.clear();
 
-    this.#debugLog.log('info', 'pipeline', `Session stopped: ${reason}`);
-    this.#emitSessionState('', '');
+    // Disconnect STT
+    if (this.#sttWs) {
+      try { this.#sttWs.send(JSON.stringify({ message_type: 'close_stream' })); } catch {}
+      this.#sttWs.close();
+      this.#sttWs = null;
+    }
+    if (this.#sttHeartbeat) { clearInterval(this.#sttHeartbeat); this.#sttHeartbeat = null; }
+
+    // Disconnect TTS
+    if (this.#ttsWs) {
+      try { this.#ttsWs.send(JSON.stringify({ text: '' })); } catch {}
+      this.#ttsWs.close();
+      this.#ttsWs = null;
+    }
+    if (this.#ttsHeartbeat) { clearInterval(this.#ttsHeartbeat); this.#ttsHeartbeat = null; }
+
+    this.#emitConnectionState('stt', { status: 'disconnected' });
+    this.#emitConnectionState('tts', { status: 'disconnected' });
+    this.#emitConnectionState('llm', { status: 'disconnected' });
+
+    this.#latencyMonitor.clear();
+    this.#emitSessionState();
   }
 
-  /** Update the main window reference (for IPC). */
   setMainWindow(window: BrowserWindow | null): void {
     this.#mainWindow = window;
     this.#latencyMonitor.setMainWindow(window);
   }
 
-  /** Get the audio router for direct access. */
-  getAudioRouter(): AudioRouter {
-    return this.#audioRouter;
+  getAudioRouter(): AudioRouter { return this.#audioRouter; }
+  isActive(): boolean { return this.#sessionActive; }
+
+  // ── STT Connection ────────────────────────────────────────
+
+  async #connectSTT(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const ws = new WebSocket(STT_ENDPOINT);
+      this.#sttWs = ws;
+
+      ws.on('open', () => {
+        // Send config
+        ws.send(JSON.stringify({
+          type: 'config',
+          encoding: 'pcm_16000',
+          language_code: this.#sourceLanguage,
+          model: 'scribe_v2_realtime',
+        }));
+
+        this.#emitConnectionState('stt', { status: 'connected' });
+        this.#debugLog.log('info', 'connection', 'STT connected');
+
+        // Heartbeat
+        this.#sttHeartbeat = setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            try { ws.send(Buffer.alloc(0)); } catch {}
+          }
+        }, HEARTBEAT_INTERVAL_MS);
+
+        resolve();
+      });
+
+      ws.on('message', (data: Buffer | string) => {
+        this.#handleSTTMessage(typeof data === 'string' ? data : data.toString());
+      });
+
+      ws.on('error', (err: Error) => {
+        this.#debugLog.log('error', 'connection', `STT error: ${err.message}`);
+        this.#emitConnectionState('stt', { status: 'error', error: err.message, retryable: true });
+        resolve(); // Don't block session start
+      });
+
+      ws.on('close', () => {
+        if (this.#sttHeartbeat) { clearInterval(this.#sttHeartbeat); this.#sttHeartbeat = null; }
+        if (this.#sessionActive) {
+          this.#emitConnectionState('stt', { status: 'disconnected' });
+        }
+      });
+    });
   }
 
-  /** Check if session is active. */
-  isActive(): boolean {
-    return this.#sessionActive;
+  #sendAudioToSTT(chunk: Int16Array): void {
+    if (this.#sttWs?.readyState === WebSocket.OPEN) {
+      this.#sttWs.send(JSON.stringify({
+        message_type: 'input_audio_chunk',
+        audio_base_64: pcmToBase64(chunk),
+        sample_rate: 16000,
+      }));
+    }
   }
 
-  // ── Private Methods ─────────────────────────────────────────
+  #handleSTTMessage(data: string): void {
+    try {
+      const msg = JSON.parse(data) as { type: string; text?: string; language?: string };
+
+      if (msg.type === 'partial_transcript' && msg.text) {
+        this.#debugLog.log('info', 'pipeline', `STT partial: "${msg.text.slice(0, 50)}"`);
+      }
+
+      if ((msg.type === 'committed_transcript' || msg.type === 'committed_transcript_with_timestamps') && msg.text) {
+        const text = msg.text.trim();
+        if (!text) return;
+
+        this.#debugLog.log('info', 'pipeline', `STT final: "${text}"`);
+        this.#latencyMonitor.markSTTEnd(this.#currentSequenceId);
+
+        this.#emitStage(this.#currentSequenceId, 'TRANSCRIBED');
+
+        // Feed to translation
+        this.#translateAndSpeak(text, this.#currentSequenceId);
+      }
+    } catch {
+      this.#debugLog.log('error', 'pipeline', 'STT message parse error');
+    }
+  }
 
   #handleSpeechEnd(): void {
     if (!this.#sessionActive) return;
@@ -133,29 +299,256 @@ export class DesktopPipeline {
     this.#totalUtterances++;
 
     this.#latencyMonitor.markCaptureEnd(this.#currentSequenceId);
+    this.#emitStage(this.#currentSequenceId, 'CAPTURED');
 
-    sendToRenderer(this.#mainWindow, 'pipeline:stage-update', {
-      sequenceId: this.#currentSequenceId,
-      stage: 'CAPTURED',
-    });
+    // Tell STT to commit (finalize current transcript)
+    if (this.#sttWs?.readyState === WebSocket.OPEN) {
+      this.#sttWs.send(JSON.stringify({ message_type: 'commit' }));
+    }
 
-    this.#debugLog.log('info', 'pipeline', `Utterance ${this.#currentSequenceId} captured`);
+    this.#debugLog.log('info', 'pipeline', `Utterance ${this.#currentSequenceId} captured — commit sent`);
   }
 
-  #emitSessionState(sourceLanguage: string, targetLanguage: string): void {
-    const state: SessionState = {
+  // ── Translation ───────────────────────────────────────────
+
+  async #translateAndSpeak(text: string, sequenceId: number): Promise<void> {
+    this.#latencyMonitor.markTranslationStart(sequenceId);
+
+    try {
+      let url: string;
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      let body: Record<string, unknown>;
+
+      if (this.#llmProvider === 'anthropic') {
+        url = 'https://api.anthropic.com/v1/messages';
+        headers['x-api-key'] = this.#llmApiKey;
+        headers['anthropic-version'] = '2023-06-01';
+        body = {
+          model: 'claude-sonnet-4-20250514',
+          system: this.#buildTranslationPrompt(),
+          messages: [{ role: 'user', content: text }],
+          stream: true, max_tokens: 500,
+        };
+      } else {
+        // OpenAI or OpenRouter
+        url = this.#llmProvider === 'openrouter'
+          ? 'https://openrouter.ai/api/v1/chat/completions'
+          : 'https://api.openai.com/v1/chat/completions';
+        headers['Authorization'] = `Bearer ${this.#llmApiKey}`;
+        if (this.#llmProvider === 'openrouter') {
+          headers['HTTP-Referer'] = 'https://voicebridge.app';
+          headers['X-Title'] = 'VoiceBridge';
+        }
+        const model = this.#llmProvider === 'openrouter' ? this.#openRouterModel : 'gpt-4o';
+        body = {
+          model,
+          messages: [
+            { role: 'system', content: this.#buildTranslationPrompt() },
+            { role: 'user', content: text },
+          ],
+          stream: true, max_tokens: 500, temperature: 0.3,
+        };
+      }
+
+      const response = await fetch(url, {
+        method: 'POST', headers,
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (!response.ok) {
+        this.#debugLog.log('error', 'pipeline', `LLM error: ${response.status}`);
+        this.#droppedUtterances++;
+        return;
+      }
+
+      // Stream tokens → TTS
+      const reader = response.body?.getReader();
+      if (!reader) return;
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let fullTranslation = '';
+      let firstToken = true;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6);
+          if (data === '[DONE]') break;
+
+          try {
+            let token: string | undefined;
+            const parsed = JSON.parse(data) as Record<string, unknown>;
+
+            if (this.#llmProvider === 'anthropic') {
+              const p = parsed as { type?: string; delta?: { text?: string } };
+              if (p.type === 'content_block_delta') token = p.delta?.text;
+            } else {
+              const p = parsed as { choices?: Array<{ delta?: { content?: string } }> };
+              token = p.choices?.[0]?.delta?.content;
+            }
+
+            if (token) {
+              if (firstToken) {
+                this.#latencyMonitor.markTranslationFirstToken(sequenceId);
+                this.#emitStage(sequenceId, 'TRANSLATED');
+                firstToken = false;
+              }
+              fullTranslation += token;
+              // Stream token to TTS
+              this.#sendTextToTTS(token);
+            }
+          } catch { /* skip malformed */ }
+        }
+      }
+
+      if (fullTranslation) {
+        this.#debugLog.log('info', 'pipeline', `Translation: "${fullTranslation.slice(0, 80)}"`);
+        // Flush TTS to generate remaining audio
+        this.#flushTTS();
+      }
+
+    } catch (err) {
+      this.#debugLog.log('error', 'pipeline', `Translation failed: ${err instanceof Error ? err.message : String(err)}`);
+      this.#droppedUtterances++;
+    }
+  }
+
+  #buildTranslationPrompt(): string {
+    const src = this.#sourceLanguage === 'auto' ? 'the detected language' : this.#sourceLanguage;
+    return `You are a real-time speech translator. Translate from ${src} to ${this.#targetLanguage}. Output ONLY the translated text. No explanations, no brackets, no notes. Keep it concise and natural.`;
+  }
+
+  // ── TTS Connection ────────────────────────────────────────
+
+  async #connectTTS(): Promise<void> {
+    const url = `wss://api.elevenlabs.io/v1/text-to-speech/${this.#voiceId}/stream-input?model_id=eleven_flash_v2_5`;
+
+    return new Promise<void>((resolve) => {
+      const ws = new WebSocket(url);
+      this.#ttsWs = ws;
+
+      ws.on('open', () => {
+        // Init message
+        ws.send(JSON.stringify({
+          text: ' ',
+          voice_settings: {
+            stability: this.#voiceStability,
+            similarity_boost: this.#voiceSimilarityBoost,
+            style: this.#voiceStyle,
+            use_speaker_boost: true,
+          },
+          generation_config: { chunk_length_schedule: CHUNK_LENGTH_SCHEDULE },
+          xi_api_key: this.#apiKey,
+          output_format: 'pcm_24000',
+        }));
+
+        this.#emitConnectionState('tts', { status: 'connected' });
+        this.#debugLog.log('info', 'connection', 'TTS connected');
+
+        // Heartbeat
+        this.#ttsHeartbeat = setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            try { ws.send(Buffer.alloc(0)); } catch {}
+          }
+        }, HEARTBEAT_INTERVAL_MS);
+
+        resolve();
+      });
+
+      ws.on('message', (data: Buffer | string) => {
+        this.#handleTTSMessage(data);
+      });
+
+      ws.on('error', (err: Error) => {
+        this.#debugLog.log('error', 'connection', `TTS error: ${err.message}`);
+        this.#emitConnectionState('tts', { status: 'error', error: err.message, retryable: true });
+        resolve();
+      });
+
+      ws.on('close', () => {
+        if (this.#ttsHeartbeat) { clearInterval(this.#ttsHeartbeat); this.#ttsHeartbeat = null; }
+        if (this.#sessionActive) {
+          this.#emitConnectionState('tts', { status: 'disconnected' });
+        }
+      });
+    });
+  }
+
+  #sendTextToTTS(text: string): void {
+    if (this.#ttsWs?.readyState === WebSocket.OPEN) {
+      this.#ttsWs.send(JSON.stringify({ text }));
+    }
+  }
+
+  #flushTTS(): void {
+    if (this.#ttsWs?.readyState === WebSocket.OPEN) {
+      this.#ttsWs.send(JSON.stringify({ text: '', flush: true }));
+    }
+  }
+
+  #handleTTSMessage(data: Buffer | string): void {
+    // Binary audio — PCM Int16 24kHz
+    if (Buffer.isBuffer(data) && data.length > 0) {
+      this.#latencyMonitor.markTTSFirstByte(this.#currentSequenceId);
+      this.#emitStage(this.#currentSequenceId, 'SYNTHESIZED');
+
+      // Write TTS audio to BlackHole via native addon
+      this.#audioRouter.writeTTSAudio(data);
+      this.#audioRouter.transitionRouting({ type: 'tts_start' });
+      return;
+    }
+
+    // JSON message
+    try {
+      const msg = JSON.parse(typeof data === 'string' ? data : data.toString()) as {
+        audio?: string;
+        isFinal?: boolean;
+      };
+
+      if (msg.audio) {
+        const audioBuffer = Buffer.from(msg.audio, 'base64');
+        this.#audioRouter.writeTTSAudio(audioBuffer);
+        this.#audioRouter.transitionRouting({ type: 'tts_start' });
+      }
+
+      if (msg.isFinal) {
+        this.#audioRouter.transitionRouting({ type: 'tts_end' });
+        this.#latencyMonitor.markPlaybackStart(this.#currentSequenceId);
+        this.#emitStage(this.#currentSequenceId, 'PLAYED');
+        this.#debugLog.log('info', 'pipeline', `Utterance ${this.#currentSequenceId} played`);
+      }
+    } catch { /* skip */ }
+  }
+
+  // ── IPC Helpers ───────────────────────────────────────────
+
+  #emitSessionState(): void {
+    sendToRenderer(this.#mainWindow, 'session:state-changed', {
       active: this.#sessionActive,
       startedAt: this.#sessionStartedAt,
-      sourceLanguage,
-      targetLanguage,
+      sourceLanguage: this.#sourceLanguage,
+      targetLanguage: this.#targetLanguage,
       totalUtterances: this.#totalUtterances,
       droppedUtterances: this.#droppedUtterances,
       currentSequenceId: this.#currentSequenceId,
-      voiceTimeMs: 0,
-      ttsCharactersUsed: 0,
-      sttSecondsUsed: 0,
-      llmTokensUsed: 0,
-    };
-    sendToRenderer(this.#mainWindow, 'session:state-changed', state);
+      voiceTimeMs: 0, ttsCharactersUsed: 0, sttSecondsUsed: 0, llmTokensUsed: 0,
+    });
+  }
+
+  #emitStage(sequenceId: number, stage: PipelineStage): void {
+    sendToRenderer(this.#mainWindow, 'pipeline:stage-update', { sequenceId, stage });
+  }
+
+  #emitConnectionState(service: 'stt' | 'tts' | 'llm', state: ServiceConnectionState): void {
+    sendToRenderer(this.#mainWindow, 'connection:state-changed', { service, state });
   }
 }
