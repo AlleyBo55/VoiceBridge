@@ -104,6 +104,8 @@ export class DesktopPipeline {
     this.#processedTextLength = 0;
     this.#lastPartialTimestamp = 0;
     this.#ttsTextQueue = '';
+    this.#utteranceQueue = [];
+    this.#processingUtterance = false;
     if (this.#partialStableTimer) { clearTimeout(this.#partialStableTimer); this.#partialStableTimer = null; }
     if (this.#ttsFlushTimer) { clearTimeout(this.#ttsFlushTimer); this.#ttsFlushTimer = null; }
 
@@ -349,8 +351,8 @@ export class DesktopPipeline {
     this.#latencyMonitor.markSTTEnd(this.#currentSequenceId);
     this.#emitStage(this.#currentSequenceId, 'TRANSCRIBED');
 
-    // Send to translation → REST TTS (no WebSocket needed)
-    this.#translateAndSpeak(newText, this.#currentSequenceId);
+    // Queue the utterance — processed serially, in order, no drops
+    this.#enqueueUtterance(newText, this.#currentSequenceId);
 
     // Reset STT — its accumulation buffer stops producing new partials once text stabilizes
     this.#processedTextLength = 0;
@@ -363,9 +365,55 @@ export class DesktopPipeline {
     await this.#connectSTT();
   }
 
+  // ── Utterance Queue (like OBS frame buffer) ───────────────
+  // Every utterance is queued and processed serially.
+  // No drops. No races. In order. Always.
+
+  #utteranceQueue: Array<{ text: string; seqId: number }> = [];
+  #processingUtterance = false;
+
+  #enqueueUtterance(text: string, seqId: number): void {
+    this.#utteranceQueue.push({ text, seqId });
+    this.#debugLog.log('info', 'pipeline', `Queued utterance #${seqId} (${this.#utteranceQueue.length} in queue)`);
+    this.#processNextUtterance();
+  }
+
+  async #processNextUtterance(): Promise<void> {
+    if (this.#processingUtterance) return; // Already processing one
+    if (this.#utteranceQueue.length === 0) return; // Nothing to process
+    if (!this.#sessionActive) return;
+
+    this.#processingUtterance = true;
+    const { text, seqId } = this.#utteranceQueue.shift()!;
+
+    try {
+      // 1. Translate
+      const translation = await this.#translate(text, seqId);
+      if (!translation || !this.#sessionActive) {
+        this.#processingUtterance = false;
+        this.#processNextUtterance();
+        return;
+      }
+
+      // 2. Generate speech via REST TTS
+      await this.#speakWithRestTTS(translation);
+
+      this.#debugLog.log('info', 'pipeline', `✓ Utterance #${seqId} complete (${this.#utteranceQueue.length} remaining)`);
+    } catch (err) {
+      this.#debugLog.log('error', 'pipeline', `Utterance #${seqId} failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    this.#processingUtterance = false;
+    // Process next in queue
+    if (this.#sessionActive) {
+      this.#processNextUtterance();
+    }
+  }
+
   // ── Translation ───────────────────────────────────────────
 
-  async #translateAndSpeak(text: string, sequenceId: number): Promise<void> {
+  /** Translate text and return the result. Does NOT speak it. */
+  async #translate(text: string, sequenceId: number): Promise<string | null> {
     this.#latencyMonitor.markTranslationStart(sequenceId);
 
     try {
@@ -464,13 +512,14 @@ export class DesktopPipeline {
 
       if (fullTranslation) {
         this.#debugLog.log('info', 'pipeline', `Translation: "${fullTranslation.slice(0, 80)}"`);
-        // Use REST TTS API — simpler, no WebSocket reconnect issues
-        await this.#speakWithRestTTS(fullTranslation);
+        return fullTranslation;
       }
+      return null;
 
     } catch (err) {
       this.#debugLog.log('error', 'pipeline', `Translation failed: ${err instanceof Error ? err.message : String(err)}`);
       this.#droppedUtterances++;
+      return null;
     }
   }
 
