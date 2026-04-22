@@ -138,7 +138,7 @@ export class DesktopPipeline {
     const ghostMode = await this.#settings.get('ghostMode');
     const deviceId = await this.#settings.get('selectedMicDeviceId');
 
-    this.#audioRouter.onAudioChunk = (chunk: Int16Array, _seq: number) => {
+    this.#audioRouter.onRawAudioChunk = (chunk: Int16Array) => {
       this.#sendAudioToSTT(chunk);
     };
     this.#audioRouter.onSpeechEnd = () => this.#handleSpeechEnd();
@@ -265,7 +265,9 @@ export class DesktopPipeline {
 
   #handleSTTMessage(data: string): void {
     try {
-      const msg = JSON.parse(data) as { type: string; text?: string; language?: string };
+      const msg = JSON.parse(data) as { type: string; text?: string; language?: string; code?: string; message?: string };
+
+      this.#debugLog.log('info', 'pipeline', `STT event: ${msg.type}${msg.text ? ` "${msg.text.slice(0, 60)}"` : ''}${msg.code ? ` [${msg.code}]` : ''}`);
 
       if (msg.type === 'partial_transcript' && msg.text) {
         this.#debugLog.log('info', 'pipeline', `STT partial: "${msg.text.slice(0, 50)}"`);
