@@ -525,12 +525,17 @@ export class DesktopPipeline {
         this.#emitConnectionState('tts', { status: 'connected' });
         this.#debugLog.log('info', 'connection', 'TTS connected');
 
-        // Flush any queued text from during reconnection
+        // Flush any queued text from during reconnection — delay to let init message process
         if (this.#ttsTextQueue.length > 0) {
-          this.#debugLog.log('info', 'pipeline', `Flushing ${this.#ttsTextQueue.length} queued chars to TTS`);
-          ws.send(JSON.stringify({ text: this.#ttsTextQueue }));
-          ws.send(JSON.stringify({ text: '', flush: true }));
+          const queuedText = this.#ttsTextQueue;
           this.#ttsTextQueue = '';
+          setTimeout(() => {
+            if (ws.readyState === WebSocket.OPEN) {
+              this.#debugLog.log('info', 'pipeline', `Flushing ${queuedText.length} queued chars to TTS`);
+              ws.send(JSON.stringify({ text: queuedText }));
+              ws.send(JSON.stringify({ text: '', flush: true }));
+            }
+          }, 500); // Wait 500ms for TTS to process init message
         }
 
         // Heartbeat
@@ -581,7 +586,7 @@ export class DesktopPipeline {
       this.#ttsSentChars += text.length;
       this.#ttsWs.send(JSON.stringify({ text }));
     } else {
-      // Queue text while TTS is reconnecting
+      // Queue text — TTS might be reconnecting
       this.#ttsTextQueue += text;
     }
   }
@@ -591,6 +596,9 @@ export class DesktopPipeline {
       this.#debugLog.log('info', 'pipeline', `TTS flush — sent ${this.#ttsSentChars} chars total`);
       this.#ttsWs.send(JSON.stringify({ text: '', flush: true }));
       this.#ttsSentChars = 0;
+    } else if (this.#ttsTextQueue.length > 0) {
+      // TTS not open — queue will be flushed when it reconnects
+      this.#debugLog.log('info', 'pipeline', `TTS not open — ${this.#ttsTextQueue.length} chars queued for reconnect`);
     }
   }
 
