@@ -145,16 +145,20 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
   resample(pcm: Buffer, fromRate: number, toRate: number): Buffer {
     if (fromRate === toRate) return pcm;
     const ratio = toRate / fromRate;
-    const inputSamples = pcm.length / 2;
+    const inputSamples = Math.floor(pcm.length / 2); // ensure even
+    if (inputSamples === 0) return Buffer.alloc(0);
     const outputSamples = Math.ceil(inputSamples * ratio);
     const output = Buffer.alloc(outputSamples * 2);
+    const maxOffset = (inputSamples - 1) * 2;
     for (let i = 0; i < outputSamples; i++) {
       const srcIndex = i / ratio;
       const low = Math.floor(srcIndex);
       const high = Math.min(low + 1, inputSamples - 1);
       const frac = srcIndex - low;
-      const sampleLow = pcm.readInt16LE(low * 2);
-      const sampleHigh = pcm.readInt16LE(high * 2);
+      const lowOff = Math.min(low * 2, maxOffset);
+      const highOff = Math.min(high * 2, maxOffset);
+      const sampleLow = pcm.readInt16LE(lowOff);
+      const sampleHigh = pcm.readInt16LE(highOff);
       const interpolated = Math.round(sampleLow * (1 - frac) + sampleHigh * frac);
       output.writeInt16LE(Math.max(-32768, Math.min(32767, interpolated)), i * 2);
     }
@@ -303,12 +307,20 @@ export class MockNativeAddon implements NativeAudioAddon {
   resample(pcm: Buffer, fromRate: number, toRate: number): Buffer {
     if (fromRate === toRate) return pcm;
     const ratio = toRate / fromRate;
-    const inputSamples = pcm.length / 2;
+    const inputSamples = Math.floor(pcm.length / 2);
+    if (inputSamples === 0) return Buffer.alloc(0);
     const outputSamples = Math.ceil(inputSamples * ratio);
     const output = Buffer.alloc(outputSamples * 2);
+    const maxOff = (inputSamples - 1) * 2;
     for (let i = 0; i < outputSamples; i++) {
       const srcIndex = i / ratio;
       const low = Math.floor(srcIndex);
+      const high = Math.min(low + 1, inputSamples - 1);
+      const frac = srcIndex - low;
+      output.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(pcm.readInt16LE(Math.min(low * 2, maxOff)) * (1 - frac) + pcm.readInt16LE(Math.min(high * 2, maxOff)) * frac))), i * 2);
+    }
+    return output;
+  }
       const high = Math.min(low + 1, inputSamples - 1);
       const frac = srcIndex - low;
       output.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(pcm.readInt16LE(low * 2) * (1 - frac) + pcm.readInt16LE(high * 2) * frac))), i * 2);

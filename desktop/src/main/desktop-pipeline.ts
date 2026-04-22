@@ -321,10 +321,7 @@ export class DesktopPipeline {
       this.#translateAndSpeak(pendingText, this.#currentSequenceId);
     }
 
-    // Also try commit in case the server supports it
-    if (this.#sttWs?.readyState === WebSocket.OPEN) {
-      try { this.#sttWs.send(JSON.stringify({ message_type: 'commit' })); } catch {}
-    }
+    // Note: commit not supported on this endpoint — partials are used directly
 
     this.#debugLog.log('info', 'pipeline', `Utterance ${this.#currentSequenceId} captured — commit sent`);
   }
