@@ -96,11 +96,27 @@ Five stages. Under 1.5 seconds. Works everywhere.
 
 ### Virtual Mic Driver (Per OS)
 
-| OS | Driver Technology | Install Method |
-|----|------------------|----------------|
-| macOS | CoreAudio HAL Plugin | `sudo` (copies to `/Library/Audio/Plug-Ins/HAL/`) |
-| Windows | WASAPI Virtual Audio Endpoint | Administrator elevation |
-| Linux | PulseAudio null sink + module-loopback | User-space (no elevation) |
+VoiceBridge needs a virtual audio device so meeting apps can select it as a microphone. The app installs this automatically — click "Install Driver" in the main window.
+
+| OS | What Gets Installed | How |
+|----|-------------------|-----|
+| macOS | [BlackHole 2ch](https://existential.audio/blackhole/) | `brew install blackhole-2ch` (requires [Homebrew](https://brew.sh)) |
+| Ubuntu/Linux | PulseAudio/PipeWire null sink | `pactl load-module module-null-sink` (no elevation needed) |
+| Windows | [VB-CABLE](https://vb-audio.com/Cable/) | Manual download + Run as Administrator |
+
+**If install fails**, VoiceBridge shows the exact error and step-by-step resolution:
+
+| Error | Resolution |
+|-------|-----------|
+| macOS: "Homebrew not found" | Install Homebrew: `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"` |
+| macOS: "Permission denied" | Run `brew install blackhole-2ch` manually in Terminal |
+| macOS: "Xcode CLT required" | Run `xcode-select --install` first |
+| Linux: "No PulseAudio" | Install: `sudo apt install pulseaudio` (Ubuntu) or `sudo dnf install pulseaudio` (Fedora) |
+| Linux: "Daemon not running" | Start it: `systemctl --user start pipewire pipewire-pulse` |
+| Linux: "Module init failed" | Unload first: `pactl unload-module module-null-sink`, then retry |
+| Windows | Download VB-CABLE from [vb-audio.com/Cable](https://vb-audio.com/Cable/), run installer as Admin, reboot |
+
+After the driver is installed, select "BlackHole 2ch" (macOS), "VoiceBridge Mic" (Linux), or "CABLE Output" (Windows) as your microphone in any meeting app.
 
 ---
 
