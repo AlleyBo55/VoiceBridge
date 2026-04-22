@@ -21,6 +21,42 @@ declare global {
 
 const vb = window.voicebridge;
 
+// ── Language Options ────────────────────────────────────────
+
+const LANG_OPTIONS = [
+  { code: 'af', name: 'Afrikaans' }, { code: 'ar', name: 'Arabic' },
+  { code: 'hy', name: 'Armenian' }, { code: 'az', name: 'Azerbaijani' },
+  { code: 'bn', name: 'Bengali' }, { code: 'bs', name: 'Bosnian' },
+  { code: 'bg', name: 'Bulgarian' }, { code: 'ca', name: 'Catalan' },
+  { code: 'zh', name: 'Chinese (Mandarin)' }, { code: 'hr', name: 'Croatian' },
+  { code: 'cs', name: 'Czech' }, { code: 'da', name: 'Danish' },
+  { code: 'nl', name: 'Dutch' }, { code: 'en', name: 'English' },
+  { code: 'et', name: 'Estonian' }, { code: 'fil', name: 'Filipino' },
+  { code: 'fi', name: 'Finnish' }, { code: 'fr', name: 'French' },
+  { code: 'ka', name: 'Georgian' }, { code: 'de', name: 'German' },
+  { code: 'el', name: 'Greek' }, { code: 'gu', name: 'Gujarati' },
+  { code: 'he', name: 'Hebrew' }, { code: 'hi', name: 'Hindi' },
+  { code: 'hu', name: 'Hungarian' }, { code: 'is', name: 'Icelandic' },
+  { code: 'id', name: 'Indonesian' }, { code: 'it', name: 'Italian' },
+  { code: 'ja', name: 'Japanese' }, { code: 'kn', name: 'Kannada' },
+  { code: 'kk', name: 'Kazakh' }, { code: 'ko', name: 'Korean' },
+  { code: 'lv', name: 'Latvian' }, { code: 'lt', name: 'Lithuanian' },
+  { code: 'mk', name: 'Macedonian' }, { code: 'ms', name: 'Malay' },
+  { code: 'ml', name: 'Malayalam' }, { code: 'mr', name: 'Marathi' },
+  { code: 'ne', name: 'Nepali' }, { code: 'no', name: 'Norwegian' },
+  { code: 'fa', name: 'Persian' }, { code: 'pl', name: 'Polish' },
+  { code: 'pt', name: 'Portuguese' }, { code: 'pa', name: 'Punjabi' },
+  { code: 'ro', name: 'Romanian' }, { code: 'ru', name: 'Russian' },
+  { code: 'sr', name: 'Serbian' }, { code: 'sk', name: 'Slovak' },
+  { code: 'sl', name: 'Slovenian' }, { code: 'so', name: 'Somali' },
+  { code: 'es', name: 'Spanish' }, { code: 'sw', name: 'Swahili' },
+  { code: 'sv', name: 'Swedish' }, { code: 'ta', name: 'Tamil' },
+  { code: 'te', name: 'Telugu' }, { code: 'th', name: 'Thai' },
+  { code: 'tr', name: 'Turkish' }, { code: 'uk', name: 'Ukrainian' },
+  { code: 'ur', name: 'Urdu' }, { code: 'vi', name: 'Vietnamese' },
+  { code: 'cy', name: 'Welsh' },
+];
+
 // ── State ───────────────────────────────────────────────────
 
 interface AppState {
@@ -541,6 +577,8 @@ function SettingsView({ onBack }: { onBack: () => void }) {
   const [recordedChunks, setRecordedChunks] = useState<Blob[]>([]);
   const [uploading, setUploading] = useState(false);
   const [recordingTimer, setRecordingTimer] = useState<ReturnType<typeof setInterval> | null>(null);
+  const [sourceLang, setSourceLang] = useState('auto');
+  const [targetLang, setTargetLang] = useState('es');
 
   // Fetch models when provider or key changes
   const fetchModels = useCallback(async (provider: string, key: string) => {
@@ -566,6 +604,10 @@ function SettingsView({ onBack }: { onBack: () => void }) {
     const model = await vb.getSetting('openRouterModel') as string;
     if (el) setElevenLabsKey(el); if (llm) setLlmKey(llm); if (prov) setLlmProvider(prov);
     if (model) setLlmModel(model);
+    const sl = await vb.getSetting('sourceLanguage') as string;
+    const tl = await vb.getSetting('targetLanguage') as string;
+    if (sl) setSourceLang(sl);
+    if (tl) setTargetLang(tl);
     await refreshVoices();
     if (llm && prov) await fetchModels(prov, llm);
   })(); }, [refreshVoices, fetchModels]);
@@ -686,6 +728,35 @@ function SettingsView({ onBack }: { onBack: () => void }) {
         <button class="btn-primary" onClick={handleValidateAndSave} disabled={saving} style={{ width: '100%' }}>
           {saving ? 'VALIDATING...' : saved ? 'SAVED ✓ KEYS VALID' : 'VALIDATE & SAVE'}
         </button>
+      </div>
+
+      {/* Languages */}
+      <div class="card" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+        <div class="label">LANGUAGES</div>
+        <div style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'flex-end' }}>
+          <div style={{ flex: 1 }}>
+            <label class="label" style={{ display: 'block', marginBottom: 'var(--space-xs)' }}>I SPEAK</label>
+            <select class="input-field" value={sourceLang} onChange={async (e) => {
+              const val = (e.target as HTMLSelectElement).value;
+              setSourceLang(val);
+              await vb.setSetting('sourceLanguage', val);
+            }}>
+              <option value="auto">Auto-detect</option>
+              {LANG_OPTIONS.map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
+            </select>
+          </div>
+          <div class="label" style={{ color: 'var(--text-disabled)', paddingBottom: 8 }}>→</div>
+          <div style={{ flex: 1 }}>
+            <label class="label" style={{ display: 'block', marginBottom: 'var(--space-xs)' }}>TRANSLATE TO</label>
+            <select class="input-field" value={targetLang} onChange={async (e) => {
+              const val = (e.target as HTMLSelectElement).value;
+              setTargetLang(val);
+              await vb.setSetting('targetLanguage', val);
+            }}>
+              {LANG_OPTIONS.filter(l => l.code !== sourceLang).map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
+            </select>
+          </div>
+        </div>
       </div>
 
       {/* Voice Profiles — multi-voice */}
@@ -974,14 +1045,33 @@ function App() {
         </div>
       )}
 
-      {/* Language Pair */}
+      {/* Language Pair — clickable selectors */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
-        <div class="label" style={{ flex: 1 }}>
-          {state.sourceLanguage === 'auto' ? 'AUTO' : state.sourceLanguage.toUpperCase()}
+        <div style={{ flex: 1 }}>
+          <div class="label" style={{ marginBottom: 'var(--space-2xs)' }}>I SPEAK</div>
+          <select class="input-field" style={{ fontSize: '13px', padding: '6px 0' }}
+            value={state.sourceLanguage}
+            onChange={async (e) => {
+              const val = (e.target as HTMLSelectElement).value;
+              dispatch({ type: 'SET_LANGUAGES', source: val, target: state.targetLanguage });
+              await vb.setSetting('sourceLanguage', val);
+            }}>
+            <option value="auto">Auto-detect</option>
+            {LANG_OPTIONS.map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
+          </select>
         </div>
-        <div class="label" style={{ color: 'var(--text-disabled)' }}>→</div>
-        <div class="label" style={{ flex: 1, textAlign: 'right' }}>
-          {state.targetLanguage.toUpperCase()}
+        <div class="label" style={{ color: 'var(--text-disabled)', paddingTop: 18 }}>→</div>
+        <div style={{ flex: 1 }}>
+          <div class="label" style={{ marginBottom: 'var(--space-2xs)' }}>TRANSLATE TO</div>
+          <select class="input-field" style={{ fontSize: '13px', padding: '6px 0' }}
+            value={state.targetLanguage}
+            onChange={async (e) => {
+              const val = (e.target as HTMLSelectElement).value;
+              dispatch({ type: 'SET_LANGUAGES', source: state.sourceLanguage, target: val });
+              await vb.setSetting('targetLanguage', val);
+            }}>
+            {LANG_OPTIONS.filter(l => l.code !== state.sourceLanguage).map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
+          </select>
         </div>
       </div>
 
