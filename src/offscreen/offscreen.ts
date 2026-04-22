@@ -27,6 +27,7 @@ let isSpeaking = false;
 function init(): void {
   initMessageBus();
   log('info', 'pipeline', 'Offscreen document initialized');
+  console.log('[VB:offscreen] Offscreen document initialized');
 
   onMessage('SESSION_START', handleSessionStart);
   onMessage('SESSION_STOP', handleSessionStop);
@@ -68,6 +69,7 @@ async function handleSessionStart(
   payload: { sourceLanguage: string; targetLanguage: string },
 ): Promise<void> {
   log('info', 'pipeline', 'Starting session via orchestrator', payload);
+  console.log('[VB:offscreen] Starting session', payload);
 
   voiceTimeAccumulator = 0;
   voiceTimeStart = 0;
@@ -76,6 +78,7 @@ async function handleSessionStart(
   try {
     await orchestrator.startSession(payload);
     log('info', 'pipeline', 'Session started successfully');
+    console.log('[VB:offscreen] Session started successfully');
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log('error', 'pipeline', `Session start failed: ${message}`);
@@ -89,6 +92,7 @@ async function handleSessionStart(
 
 async function handleSessionStop(payload: { reason: string }): Promise<void> {
   log('info', 'pipeline', 'Stopping session via orchestrator', payload);
+  console.log('[VB:offscreen] Stopping session', payload);
 
   if (isSpeaking) {
     voiceTimeAccumulator += Date.now() - voiceTimeStart;

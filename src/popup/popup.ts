@@ -23,6 +23,8 @@ const voiceTimeEl = document.getElementById('voiceTimeRemaining')!;
 const settingsBtn = document.getElementById('settingsBtn')!;
 const ghostModeBtn = document.getElementById('ghostModeBtn')!;
 const rouletteBtn = document.getElementById('rouletteBtn')!;
+const pipelineStageEl = document.getElementById('pipelineStage')!;
+const trackStatusEl = document.getElementById('trackStatus')!;
 
 // ── State ───────────────────────────────────────────────────
 
@@ -128,6 +130,11 @@ function setupMessageHandlers(): void {
   onMessage('SESSION_STATE_CHANGED', (state: SessionState) => {
     sessionActive = state.active;
     mainToggle.setAttribute('aria-checked', String(state.active));
+    if (!state.active) {
+      pipelineStageEl.textContent = '[IDLE]';
+      trackStatusEl.textContent = '[NOT INJECTED]';
+      trackStatusEl.style.color = '';
+    }
   });
 
   onMessage('LATENCY_UPDATE', (measurement) => {
@@ -168,6 +175,31 @@ function setupMessageHandlers(): void {
     mainToggle.setAttribute('aria-checked', 'false');
     sessionActive = false;
     stopDurationTimer();
+  });
+
+  // Pipeline stage debug indicator
+  onMessage('PIPELINE_STAGE_UPDATE', ({ stage }) => {
+    const stageMap: Record<string, string> = {
+      IDLE: '[IDLE]',
+      CAPTURED: '[CAPTURING]',
+      TRANSCRIBED: '[TRANSCRIBING]',
+      TRANSLATED: '[TRANSLATING]',
+      SYNTHESIZED: '[SPEAKING]',
+      PLAYED: '[IDLE]',
+      DROPPED: '[IDLE]',
+    };
+    pipelineStageEl.textContent = stageMap[stage] ?? `[${stage}]`;
+  });
+
+  // Track injection debug indicator
+  onMessage('TRACK_STATUS_UPDATE', ({ injected, platform }) => {
+    if (injected) {
+      trackStatusEl.textContent = `[INJECTED] ${platform}`;
+      trackStatusEl.style.color = 'var(--success)';
+    } else {
+      trackStatusEl.textContent = '[NOT INJECTED]';
+      trackStatusEl.style.color = '';
+    }
   });
 }
 
