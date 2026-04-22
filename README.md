@@ -158,12 +158,12 @@ npm start
 
 ### 3. Enter your API keys
 
-On first launch, VoiceBridge asks for your API keys:
+On first launch, VoiceBridge walks you through onboarding:
 
-- **ElevenLabs API key** — for speech-to-text (Scribe) and text-to-speech (voice cloning)
-- **LLM API key** — for translation (OpenAI, Anthropic, or OpenRouter)
+1. **API Keys** — enter your ElevenLabs key and LLM key (OpenAI, Anthropic, or OpenRouter). Keys are validated against the APIs before saving. Pick your LLM model (e.g. `openai/gpt-4o` for OpenRouter).
+2. **Voice Clone** — record 30+ seconds of your voice reading a prompt. VoiceBridge uploads it to ElevenLabs and creates a voice clone. You can skip this to use a default voice.
 
-Keys are encrypted with AES-GCM-256 and stored locally. Never sent anywhere except the API providers. You can change them anytime in Settings.
+Keys are encrypted with AES-GCM-256 and stored only on your device. VoiceBridge has no server — we never see your keys. You can change everything later in Settings.
 
 ### 4. Install the virtual mic driver
 
@@ -229,11 +229,12 @@ If it fails, the app shows the exact error and how to fix it.
 ```bash
 cd desktop
 npm install          # Install dependencies
-npm run build        # Build desktop app
-npm start            # Launch app
+npm run dev          # Build + launch Electron with hot-reload renderer
 npm run test         # Run tests (42 property-based tests)
 npm run typecheck    # TypeScript strict check
 ```
+
+`npm run dev` compiles the main process + preload with esbuild, starts a Vite dev server for the renderer, and launches Electron with DevTools open.
 
 ### Project Structure
 
@@ -243,11 +244,12 @@ desktop/
 │   ├── main/           # Electron main process
 │   │   ├── main.ts             # Entry point, tray, window, IPC handlers
 │   │   ├── audio-router.ts     # Mic capture, VAD, noise gate, virtual mic output
-│   │   ├── desktop-pipeline.ts # Pipeline adapter (wraps existing orchestrator)
+│   │   ├── desktop-pipeline.ts # End-to-end: Mic → STT → LLM → TTS → BlackHole
 │   │   ├── desktop-settings-store.ts  # AES-GCM-256 encrypted JSON settings
 │   │   ├── desktop-latency.ts  # Latency monitor with color mapping
 │   │   ├── desktop-debug-log.ts # 500-entry ring buffer
-│   │   ├── driver-installer.ts # Virtual mic driver install/uninstall
+│   │   ├── driver-installer.ts # Real virtual mic driver (BlackHole/PulseAudio/VB-CABLE)
+│   │   ├── desktop-voice-profile.ts # Multi-voice clone management via ElevenLabs API
 │   │   ├── auto-start.ts       # Login item management
 │   │   ├── language-service.ts  # Language list caching + filtering
 │   │   ├── panic-stop.ts       # Global Cmd/Ctrl+Shift+X
@@ -261,22 +263,33 @@ desktop/
 └── package.json
 ```
 
-### Reused Modules (from `src/lib/`)
+### Pipeline Architecture
 
-The desktop app reuses these pure-logic modules unchanged:
+The desktop pipeline (`desktop-pipeline.ts`) wires the full translation flow directly:
+
+```
+Mic Capture → [WebSocket] ElevenLabs Scribe v2 STT
+                    ↓ transcript
+            [HTTP SSE] LLM Translation (OpenAI/Anthropic/OpenRouter)
+                    ↓ tokens streamed one-by-one
+            [WebSocket] ElevenLabs Flash v2.5 TTS
+                    ↓ PCM audio
+            Resample 24kHz→48kHz → Write to BlackHole
+```
+
+All connections run in the Electron main process. No browser APIs, no offscreen documents, no content scripts. The renderer only shows the UI — all audio and API calls happen in Node.js.
+
+### Reference Modules (from `src/lib/`)
+
+The Chrome extension's pure-logic modules are kept as reference:
 
 | Module | Purpose |
 |--------|---------|
-| `stt-client.ts` | ElevenLabs Scribe v2 WebSocket client |
-| `tts-client.ts` | ElevenLabs Flash v2.5 WebSocket client |
-| `translation-engine.ts` | LLM streaming translation (OpenAI/Anthropic/OpenRouter) |
 | `echo-cancellation.ts` | Three-state echo cancellation machine |
 | `audio-routing.ts` | Pure audio routing state machine |
 | `degradation-manager.ts` | Graceful degradation cascade |
 | `cleanup-sequencer.ts` | Deterministic ordered cleanup |
 | `latency-monitor.ts` | Per-stage timing |
-| `debug-log.ts` | Circular log buffer |
-| `languages.ts` | Language list |
 | `types.ts` | All shared type definitions |
 
 ---
@@ -287,7 +300,7 @@ The desktop app reuses these pure-logic modules unchanged:
 |-------|------|--------|
 | Phase 1 | Chrome Extension — core pipeline, UI, onboarding | ✓ Complete |
 | Phase 2 | Pipeline hardening — orchestrator, state machines, degradation | ✓ Complete |
-| Phase 3 | Desktop app rewrite — virtual mic driver, Electron, native audio | 🔄 In Progress |
+| Phase 3 | Desktop app — Electron, virtual mic, end-to-end pipeline | ✓ Complete |
 
 ---
 
