@@ -617,8 +617,6 @@ function SettingsView({ onBack }: { onBack: () => void }) {
   const [llmKey, setLlmKey] = useState('');
   const [llmProvider, setLlmProvider] = useState('openrouter');
   const [llmModel, setLlmModel] = useState('openai/gpt-4o');
-  const [availableModels, setAvailableModels] = useState<Array<{ id: string; name: string }>>([]);
-  const [loadingModels, setLoadingModels] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
@@ -638,17 +636,6 @@ function SettingsView({ onBack }: { onBack: () => void }) {
   const [sourceLang, setSourceLang] = useState('auto');
   const [targetLang, setTargetLang] = useState('es');
 
-  // Fetch models when provider or key changes
-  const fetchModels = useCallback(async (provider: string, key: string) => {
-    if (!key.trim()) { setAvailableModels([]); return; }
-    setLoadingModels(true);
-    try {
-      const models = await vb.listModels(provider, key.trim());
-      setAvailableModels(models);
-    } catch { setAvailableModels([]); }
-    setLoadingModels(false);
-  }, []);
-
   const refreshVoices = useCallback(async () => {
     setLoadingVoices(true);
     try { const list = await vb.listVoices(); setVoices(list); const a = await vb.getActiveVoice() as string; setActiveVoiceId(a ?? ''); } catch {}
@@ -667,8 +654,7 @@ function SettingsView({ onBack }: { onBack: () => void }) {
     if (sl) setSourceLang(sl);
     if (tl) setTargetLang(tl);
     await refreshVoices();
-    if (llm && prov) await fetchModels(prov, llm);
-  })(); }, [refreshVoices, fetchModels]);
+  })(); }, [refreshVoices]);
 
   const handleValidateAndSave = useCallback(async () => {
     if (!elevenLabsKey.trim()) { setError('ElevenLabs API key is required'); return; }
@@ -682,7 +668,7 @@ function SettingsView({ onBack }: { onBack: () => void }) {
     const llmR = await vb.validateLLMKey(llmProvider, llmKey.trim());
     setLlmValidating(false); setLlmValid(llmR.valid);
     if (!llmR.valid) { setError('LLM: ' + (llmR.error ?? 'Invalid')); setSaving(false); return; }
-    try { await vb.setSetting('elevenLabsApiKey', elevenLabsKey.trim()); await vb.setSetting('llmApiKey', llmKey.trim()); await vb.setSetting('llmProvider', llmProvider); await vb.setSetting('openRouterModel', llmModel); setSaved(true); setTimeout(() => setSaved(false), 3000); await refreshVoices(); await fetchModels(llmProvider, llmKey.trim()); } catch { setError('Failed to save.'); }
+    try { await vb.setSetting('elevenLabsApiKey', elevenLabsKey.trim()); await vb.setSetting('llmApiKey', llmKey.trim()); await vb.setSetting('llmProvider', llmProvider); await vb.setSetting('openRouterModel', llmModel); setSaved(true); setTimeout(() => setSaved(false), 3000); await refreshVoices(); } catch { setError('Failed to save.'); }
     finally { setSaving(false); }
   }, [elevenLabsKey, llmKey, llmProvider, refreshVoices]);
 
@@ -757,7 +743,7 @@ function SettingsView({ onBack }: { onBack: () => void }) {
         </div>
         <div>
           <label class="label" style={{ display: 'block', marginBottom: 'var(--space-xs)' }}>LLM PROVIDER</label>
-          <select class="input-field" value={llmProvider} onChange={(e) => { const p = (e.target as HTMLSelectElement).value; setLlmProvider(p); setLlmValid(null); setAvailableModels([]); if (llmKey.trim()) fetchModels(p, llmKey.trim()); }}>
+          <select class="input-field" value={llmProvider} onChange={(e) => { const p = (e.target as HTMLSelectElement).value; setLlmProvider(p); setLlmValid(null); }}>
             <option value="openrouter">OpenRouter</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option>
           </select>
         </div>
@@ -765,26 +751,51 @@ function SettingsView({ onBack }: { onBack: () => void }) {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-xs)' }}>
             <label class="label">LLM API KEY</label>{vIcon(llmValid, llmValidating)}
           </div>
-          <input class="input-field" type="password" value={llmKey} onInput={(e) => { setLlmKey((e.target as HTMLInputElement).value); setLlmValid(null); }} onBlur={() => { if (llmKey.trim()) fetchModels(llmProvider, llmKey.trim()); }} autocomplete="off" />
+          <input class="input-field" type="password" value={llmKey} onInput={(e) => { setLlmKey((e.target as HTMLInputElement).value); setLlmValid(null); }} autocomplete="off" />
         </div>
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-xs)' }}>
-            <label class="label">MODEL</label>
-            {loadingModels && <span class="mono" style={{ color: 'var(--text-disabled)', fontSize: 'var(--caption)' }}>◐ LOADING...</span>}
-          </div>
-          {availableModels.length > 0 ? (
-            <select class="input-field" value={llmModel} onChange={(e) => setLlmModel((e.target as HTMLSelectElement).value)}>
-              {availableModels.map(m => (
-                <option key={m.id} value={m.id}>{m.name || m.id}</option>
-              ))}
-            </select>
-          ) : (
-            <input class="input-field" type="text" value={llmModel} placeholder="openai/gpt-4o"
-              onInput={(e) => setLlmModel((e.target as HTMLInputElement).value)} />
-          )}
-          <div class="mono" style={{ fontSize: '10px', color: 'var(--text-disabled)', marginTop: 'var(--space-2xs)' }}>
-            {llmProvider === 'openrouter' ? 'Browse models at openrouter.ai/models' : llmProvider === 'openai' ? 'e.g. gpt-4o, gpt-4o-mini' : 'e.g. claude-sonnet-4-20250514'}
-          </div>
+          <label class="label" style={{ display: 'block', marginBottom: 'var(--space-xs)' }}>MODEL</label>
+          <select class="input-field" value={llmModel} onChange={(e) => setLlmModel((e.target as HTMLSelectElement).value)}>
+            {llmProvider === 'openrouter' && <>
+              <optgroup label="OpenAI">
+                <option value="openai/gpt-4o">GPT-4o</option>
+                <option value="openai/gpt-4o-mini">GPT-4o Mini</option>
+                <option value="openai/gpt-4.1">GPT-4.1</option>
+                <option value="openai/gpt-4.1-mini">GPT-4.1 Mini</option>
+                <option value="openai/o3-mini">o3 Mini</option>
+              </optgroup>
+              <optgroup label="Anthropic">
+                <option value="anthropic/claude-sonnet-4">Claude Sonnet 4</option>
+                <option value="anthropic/claude-3.5-haiku">Claude 3.5 Haiku</option>
+              </optgroup>
+              <optgroup label="Google">
+                <option value="google/gemini-2.5-flash">Gemini 2.5 Flash</option>
+                <option value="google/gemini-2.5-pro">Gemini 2.5 Pro</option>
+                <option value="google/gemini-2.0-flash-001">Gemini 2.0 Flash</option>
+              </optgroup>
+              <optgroup label="DeepSeek">
+                <option value="deepseek/deepseek-chat-v3-0324">DeepSeek V3</option>
+                <option value="deepseek/deepseek-r1">DeepSeek R1</option>
+              </optgroup>
+              <optgroup label="Kimi (Moonshot)">
+                <option value="moonshotai/kimi-k2">Kimi K2</option>
+              </optgroup>
+              <optgroup label="GLM (Zhipu)">
+                <option value="zhipu/glm-4-plus">GLM-4 Plus</option>
+              </optgroup>
+            </>}
+            {llmProvider === 'openai' && <>
+              <option value="gpt-4o">GPT-4o</option>
+              <option value="gpt-4o-mini">GPT-4o Mini</option>
+              <option value="gpt-4.1">GPT-4.1</option>
+              <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
+              <option value="o3-mini">o3 Mini</option>
+            </>}
+            {llmProvider === 'anthropic' && <>
+              <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
+              <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku</option>
+            </>}
+          </select>
         </div>
         <button class="btn-primary" onClick={handleValidateAndSave} disabled={saving} style={{ width: '100%' }}>
           {saving ? 'VALIDATING...' : saved ? 'SAVED ✓ KEYS VALID' : 'VALIDATE & SAVE'}
