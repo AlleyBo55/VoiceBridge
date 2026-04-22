@@ -111,6 +111,9 @@ function setupMessageHandlers(): void {
   onMessage('SESSION_START', async (payload) => {
     await ensureOffscreenDocument();
 
+    // Small delay to ensure offscreen document has initialized its message bus
+    await new Promise(resolve => setTimeout(resolve, 200));
+
     // Set up MessageChannel for audio bridge
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
     const tabId = tabs[0]?.id;
@@ -120,6 +123,7 @@ function setupMessageHandlers(): void {
 
     // Forward to offscreen document
     sendMessage('SESSION_START', payload);
+    log('info', 'state', 'SESSION_START forwarded to offscreen');
 
     await chrome.storage.session.set({
       sessionActive: true,
