@@ -48,6 +48,18 @@ async function init(): Promise<void> {
   const llmKey = await getSetting('llmApiKey');
   if (llmKey) llmKeyInput.value = '••••••••';
 
+  // Voice profile status
+  const voiceId = await getSetting('voiceProfileId');
+  const voiceStatusEl = document.getElementById('voiceProfileStatus')!;
+  const previewBtn = document.getElementById('previewVoiceBtn') as HTMLButtonElement;
+  const deleteBtn = document.getElementById('deleteVoiceBtn') as HTMLButtonElement;
+  if (voiceId) {
+    voiceStatusEl.textContent = `[READY] ${voiceId.slice(0, 8)}...`;
+    voiceStatusEl.className = 'status-inline success';
+    previewBtn.disabled = false;
+    deleteBtn.disabled = false;
+  }
+
   stabilitySlider.value = String(Math.round((await getSetting('voiceStability')) * 100));
   similaritySlider.value = String(Math.round((await getSetting('voiceSimilarityBoost')) * 100));
   styleSlider.value = String(Math.round((await getSetting('voiceStyle')) * 100));
@@ -131,6 +143,84 @@ function setupEventListeners(): void {
   sliderHandler(styleSlider, styleValue, 'voiceStyle', v => (v / 100).toFixed(2), v => v / 100);
   sliderHandler(noiseGateSlider, noiseGateValue, 'noiseGateThresholdDb', v => `${v}dB`, v => v);
   sliderHandler(contextWindowSlider, contextWindowValue, 'contextWindowSize', v => String(v), v => v);
+
+  // Voice Profile buttons
+  document.getElementById('recordVoiceBtn')!.addEventListener('click', async () => {
+    const statusEl = document.getElementById('voiceProfileStatus')!;
+    const previewBtnEl = document.getElementById('previewVoiceBtn') as HTMLButtonElement;
+    const deleteBtnEl = document.getElementById('deleteVoiceBtn') as HTMLButtonElement;
+
+    try {
+      statusEl.textContent = '[RECORDING... SPEAK FOR 30 SECONDS]';
+      statusEl.className = 'status-inline';
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const chunks: Blob[] = [];
+      const recorder = new MediaRecorder(stream);
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+
+      recorder.start(1000);
+
+      // Auto-stop after 30 seconds
+      await new Promise<void>((resolve) => {
+        setTimeout(() => { recorder.stop(); resolve(); }, 30000);
+        recorder.onstop = () => resolve();
+      });
+
+      for (const track of stream.getTracks()) track.stop();
+      const blob = new Blob(chunks, { type: 'audio/webm' });
+
+      statusEl.textContent = '[UPLOADING...]';
+      const apiKey = await getSetting('elevenLabsApiKey');
+      const formData = new FormData();
+      formData.append('files', blob, 'voice-sample.webm');
+      formData.append('name', `VoiceBridge-${crypto.randomUUID().slice(0, 8)}`);
+      formData.append('labels', JSON.stringify({ source: 'voicebridge' }));
+
+      const res = await fetch('https://api.elevenlabs.io/v1/voices/add', {
+        method: 'POST',
+        headers: { 'xi-api-key': apiKey },
+        body: formData,
+      });
+
+      if (res.ok) {
+        const data = await res.json() as { voice_id: string };
+        await setSetting('voiceProfileId', data.voice_id);
+        statusEl.textContent = `[READY] ${data.voice_id.slice(0, 8)}...`;
+        statusEl.className = 'status-inline success';
+        previewBtnEl.disabled = false;
+        deleteBtnEl.disabled = false;
+      } else {
+        statusEl.textContent = `[FAILED: ${res.status}]`;
+        statusEl.className = 'status-inline error';
+      }
+    } catch (err) {
+      statusEl.textContent = `[ERROR: ${err instanceof Error ? err.message : 'unknown'}]`;
+      statusEl.className = 'status-inline error';
+    }
+  });
+
+  document.getElementById('deleteVoiceBtn')!.addEventListener('click', async () => {
+    const statusEl = document.getElementById('voiceProfileStatus')!;
+    const voiceId = await getSetting('voiceProfileId');
+    if (!voiceId) return;
+
+    try {
+      const apiKey = await getSetting('elevenLabsApiKey');
+      await fetch(`https://api.elevenlabs.io/v1/voices/${voiceId}`, {
+        method: 'DELETE',
+        headers: { 'xi-api-key': apiKey },
+      });
+      await setSetting('voiceProfileId', '');
+      statusEl.textContent = '[NOT SET UP]';
+      statusEl.className = 'status-inline';
+      (document.getElementById('previewVoiceBtn') as HTMLButtonElement).disabled = true;
+      (document.getElementById('deleteVoiceBtn') as HTMLButtonElement).disabled = true;
+    } catch {
+      statusEl.textContent = '[DELETE FAILED]';
+      statusEl.className = 'status-inline error';
+    }
+  });
 
   // Export/Import
   exportBtn.addEventListener('click', async () => {

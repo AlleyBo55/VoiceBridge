@@ -26,9 +26,16 @@
         "https://teams.microsoft.com/*",
         "https://discord.com/channels/*"
       ],
-      "js": ["content-script.js"],
+      "js": ["content-loader.js"],
       "css": ["assets/widget.css"],
-      "run_at": "document_start"
+      "run_at": "document_start",
+      "world": "ISOLATED"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["content-script.js", "offscreen.js", "chunks/*"],
+      "matches": ["<all_urls>"]
     }
   ],
   "action": {

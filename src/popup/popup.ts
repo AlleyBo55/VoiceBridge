@@ -48,6 +48,23 @@ async function init(): Promise<void> {
     return;
   }
 
+  // Restore session state from storage (persists across popup open/close)
+  const sessionData = await chrome.storage.session.get('sessionActive');
+  if (sessionData['sessionActive']) {
+    sessionActive = true;
+    mainToggle.setAttribute('aria-checked', 'true');
+    const startData = await chrome.storage.session.get('sessionStartedAt');
+    sessionStartTime = (startData['sessionStartedAt'] as number) || Date.now();
+    startDurationTimer();
+  }
+
+  // Load voice profile status
+  const voiceId = await getSetting('voiceProfileId');
+  const voiceStatusEl = document.getElementById('voiceStatus')!;
+  if (voiceId) {
+    voiceStatusEl.textContent = 'Ready';
+  }
+
   setupEventListeners();
   setupMessageHandlers();
 }

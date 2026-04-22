@@ -73,7 +73,18 @@ async function handleSessionStart(
   voiceTimeStart = 0;
   isSpeaking = false;
 
-  await orchestrator.startSession(payload);
+  try {
+    await orchestrator.startSession(payload);
+    log('info', 'pipeline', 'Session started successfully');
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log('error', 'pipeline', `Session start failed: ${message}`);
+    sendMessage('ERROR', {
+      code: 'session-start-failed',
+      message,
+      userMessage: `Failed to start translation: ${message}`,
+    });
+  }
 }
 
 async function handleSessionStop(payload: { reason: string }): Promise<void> {
