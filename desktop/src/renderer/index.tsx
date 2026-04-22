@@ -635,6 +635,8 @@ function SettingsView({ onBack }: { onBack: () => void }) {
   const [recordingTimer, setRecordingTimer] = useState<ReturnType<typeof setInterval> | null>(null);
   const [sourceLang, setSourceLang] = useState('auto');
   const [targetLang, setTargetLang] = useState('es');
+  const [micDevices, setMicDevices] = useState<Array<{ id: string; name: string }>>([]);
+  const [selectedMic, setSelectedMic] = useState('');
 
   const refreshVoices = useCallback(async () => {
     setLoadingVoices(true);
@@ -653,6 +655,18 @@ function SettingsView({ onBack }: { onBack: () => void }) {
     const tl = await vb.getSetting('targetLanguage') as string;
     if (sl) setSourceLang(sl);
     if (tl) setTargetLang(tl);
+    // Load mic devices
+    try {
+      const devices = await vb.listDevices();
+      setMicDevices(devices.map(d => ({ id: d.id, name: d.name })));
+      const savedMic = await vb.getSetting('selectedMicDeviceId') as string;
+      if (savedMic) setSelectedMic(savedMic);
+      else if (devices.length > 0) {
+        // Default: pick first non-BlackHole device
+        const real = devices.find(d => !d.name.toLowerCase().includes('blackhole') && !d.name.toLowerCase().includes('cable'));
+        setSelectedMic(real?.id ?? devices[0]?.id ?? '');
+      }
+    } catch {}
     await refreshVoices();
   })(); }, [refreshVoices]);
 
@@ -842,6 +856,24 @@ function SettingsView({ onBack }: { onBack: () => void }) {
             </select>
           </div>
         </div>
+      </div>
+
+      {/* Microphone */}
+      <div class="card" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+        <div class="label">MICROPHONE INPUT</div>
+        <div class="mono" style={{ fontSize: '10px', color: 'var(--text-disabled)', lineHeight: 1.4 }}>
+          Select your real microphone. Do NOT select BlackHole — that's the virtual output.
+        </div>
+        <select class="input-field" value={selectedMic} onChange={async (e) => {
+          const id = (e.target as HTMLSelectElement).value;
+          setSelectedMic(id);
+          await vb.selectDevice(id);
+          await vb.setSetting('selectedMicDeviceId', id);
+        }}>
+          {micDevices.map(d => (
+            <option key={d.id} value={d.id}>{d.name}{d.name.toLowerCase().includes('blackhole') ? ' ⚠️ (virtual output)' : ''}</option>
+          ))}
+        </select>
       </div>
 
       {/* Voice Profiles — multi-voice */}
