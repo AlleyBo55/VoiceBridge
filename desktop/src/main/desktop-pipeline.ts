@@ -325,7 +325,11 @@ export class DesktopPipeline {
     // Extract only the NEW text since last translation
     const fullText = this.#lastPartialText.trim();
     if (!fullText || fullText.length <= this.#processedTextLength) {
-      this.#debugLog.log('info', 'pipeline', `Speech-end but no new text (full=${fullText.length}, processed=${this.#processedTextLength})`);
+      // If STT stopped sending partials, reset the offset so next partial works
+      if (!fullText && this.#processedTextLength > 0) {
+        this.#debugLog.log('info', 'pipeline', `Resetting STT offset (was ${this.#processedTextLength}) — STT may have reset`);
+        this.#processedTextLength = 0;
+      }
       return;
     }
 
