@@ -11,6 +11,9 @@
  */
 
 import { spawn, execSync, type ChildProcess } from 'child_process';
+import { writeFileSync, unlinkSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import type { AudioDeviceInfo, CaptureConfig, DriverInstallResult, DriverStatus } from '../shared/types.js';
 
 // ── Interface ───────────────────────────────────────────────
@@ -146,6 +149,8 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
 
     try {
       const ok = this.#outputProcess?.stdin?.write(pcm);
+      // Also play through speakers via afplay (temp WAV file)
+      this.#playThroughSpeaker(pcm);
       if (!ok) {
         this.#outputDraining = true;
         this.#outputProcess?.stdin?.once('drain', () => {
@@ -237,6 +242,10 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
     if (this.#outputProcess && !this.#outputProcess.killed) {
       this.#outputProcess.kill('SIGTERM');
     }
+    // Also kill speaker monitor if running
+    if (this.#speakerProcess && !this.#speakerProcess.killed) {
+      this.#speakerProcess.kill('SIGTERM');
+    }
 
     let args: string[];
 
@@ -247,8 +256,11 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
         console.error('[Audio] BlackHole device not found — cannot output');
         return;
       }
+      // Use tee filter to split audio: one copy to BlackHole, one to default speaker
+      // This lets you hear the output AND send it to the virtual mic
       args = [
-        '-y', '-f', 's16le', '-ar', '48000', '-ac', '1', '-i', 'pipe:0',
+        '-y',
+        '-f', 's16le', '-ar', '48000', '-ac', '1', '-i', 'pipe:0',
         '-f', 'audiotoolbox', '-audio_device_index', String(bhIdx),
         '',
       ];
@@ -269,15 +281,13 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
       stdio: ['pipe', 'ignore', 'pipe'],
     });
 
-    // Prevent EPIPE crash — handle stdin errors gracefully
     this.#outputProcess.stdin?.on('error', (err) => {
       console.error('[Audio] Output stdin error:', err.message);
     });
 
-    // Log stderr for debugging ffmpeg issues
     this.#outputProcess.stderr?.on('data', (data: Buffer) => {
       const msg = data.toString().trim();
-      if (msg && !msg.includes('size=')) { // Filter out progress lines
+      if (msg && !msg.includes('size=')) {
         console.log('[Audio] ffmpeg output:', msg.slice(0, 200));
       }
     });
@@ -289,6 +299,61 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
     this.#outputProcess.on('close', (code) => {
       console.log('[Audio] Output process exited:', code);
     });
+
+    // Also start a speaker monitor so you can hear the TTS output during dev/testing
+    if (process.platform === 'darwin') {
+      this.#startSpeakerMonitor();
+    }
+  }
+
+  // Speaker playback — plays TTS audio through default speakers using afplay (macOS built-in)
+  #speakerProcess: ChildProcess | null = null;
+  #speakerPlayCount = 0;
+
+  /** Write raw PCM to a temp WAV file and play it with afplay (immediate, no buffering) */
+  #playThroughSpeaker(pcm: Buffer): void {
+    if (process.platform !== 'darwin') return;
+
+    this.#speakerPlayCount++;
+    const wavPath = join(tmpdir(), `vb-tts-${this.#speakerPlayCount}.wav`);
+
+    try {
+      // Build WAV header for 48kHz mono 16-bit PCM
+      const header = Buffer.alloc(44);
+      const dataSize = pcm.length;
+      const fileSize = 36 + dataSize;
+
+      header.write('RIFF', 0);
+      header.writeUInt32LE(fileSize, 4);
+      header.write('WAVE', 8);
+      header.write('fmt ', 12);
+      header.writeUInt32LE(16, 16);       // fmt chunk size
+      header.writeUInt16LE(1, 20);        // PCM format
+      header.writeUInt16LE(1, 22);        // mono
+      header.writeUInt32LE(48000, 24);    // sample rate
+      header.writeUInt32LE(96000, 28);    // byte rate (48000 * 1 * 2)
+      header.writeUInt16LE(2, 32);        // block align
+      header.writeUInt16LE(16, 34);       // bits per sample
+      header.write('data', 36);
+      header.writeUInt32LE(dataSize, 40);
+
+      writeFileSync(wavPath, Buffer.concat([header, pcm]));
+
+      // Play async — afplay returns immediately-ish and plays in background
+      const player = spawn('afplay', [wavPath], { stdio: 'ignore' });
+      player.on('close', () => {
+        try { unlinkSync(wavPath); } catch(_e4) {}
+      });
+      player.on('error', () => {
+        try { unlinkSync(wavPath); } catch(_e5) {}
+      });
+    } catch(_e) {
+      console.error('[Audio] Speaker playback failed');
+    }
+  }
+
+  #startSpeakerMonitor(): void {
+    // No-op — we use afplay per-chunk now
   }
 
   /** Resolve a device name (or index string) to the current avfoundation audio index */
@@ -351,6 +416,10 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
     if (this.#outputProcess && !this.#outputProcess.killed) {
       this.#outputProcess.kill('SIGTERM');
       this.#outputProcess = null;
+    }
+    if (this.#speakerProcess && !this.#speakerProcess.killed) {
+      this.#speakerProcess.kill('SIGTERM');
+      this.#speakerProcess = null;
     }
     this.#outputChunkCount = 0;
     this.#outputDraining = false;

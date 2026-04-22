@@ -40,6 +40,17 @@ const api = {
   installDriver: (): Promise<DriverInstallResult> =>
     ipcRenderer.invoke('driver:install'),
 
+  // ── Prerequisites ───────────────────────────────────────
+  checkPrerequisites: (): Promise<{ ffmpeg: boolean; sox: boolean; blackhole: boolean; platform: string }> =>
+    ipcRenderer.invoke('prerequisites:check'),
+  installPrerequisite: (tool: string): Promise<{ success: boolean; error?: string; requiresReboot?: boolean }> =>
+    ipcRenderer.invoke('prerequisites:install', { tool }),
+
+  // ── Push-to-Talk ────────────────────────────────────────
+  pttPress: (): Promise<void> => ipcRenderer.invoke('ptt:press'),
+  pttRelease: (): Promise<void> => ipcRenderer.invoke('ptt:release'),
+  pttToggleMode: (enabled: boolean): Promise<void> => ipcRenderer.invoke('ptt:toggle-mode', { enabled }),
+
   // ── Key Validation ──────────────────────────────────────
   validateElevenLabsKey: (key: string): Promise<{ valid: boolean; error?: string }> =>
     ipcRenderer.invoke('validate:elevenlabs', { key }),
