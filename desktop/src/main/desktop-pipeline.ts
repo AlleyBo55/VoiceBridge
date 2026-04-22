@@ -136,7 +136,6 @@ export class DesktopPipeline {
     }
 
     // 4. Start audio capture
-    const noiseGate = await this.#settings.get('noiseGateThresholdDb');
     const ghostMode = await this.#settings.get('ghostMode');
     const deviceId = await this.#settings.get('selectedMicDeviceId');
 
@@ -156,13 +155,21 @@ export class DesktopPipeline {
       });
     };
 
+    const vadSensitivity = await this.#settings.get('vadSensitivity');
+    const vadThresholds = {
+      low:    { threshold: -35, onset: 400, offset: 1000 },
+      medium: { threshold: -50, onset: 200, offset: 600 },
+      high:   { threshold: -60, onset: 150, offset: 400 },
+    };
+    const vad = vadThresholds[vadSensitivity as keyof typeof vadThresholds] ?? vadThresholds.medium;
+
     this.#audioRouter.start({
       captureDeviceId: deviceId,
       captureSampleRate: 16000,
       outputSampleRate: 48000,
-      noiseGateThresholdDb: noiseGate,
-      vadSpeechOnsetMs: 300,
-      vadSpeechOffsetMs: 800,
+      noiseGateThresholdDb: ghostMode ? -65 : vad.threshold,
+      vadSpeechOnsetMs: vad.onset,
+      vadSpeechOffsetMs: vad.offset,
       ghostModeEnabled: ghostMode,
     });
 

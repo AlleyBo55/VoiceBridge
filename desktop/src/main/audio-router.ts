@@ -128,9 +128,9 @@ const DEFAULT_CONFIG: AudioRouterConfig = {
   captureDeviceId: null,
   captureSampleRate: 16000,
   outputSampleRate: 48000,
-  noiseGateThresholdDb: -40,
-  vadSpeechOnsetMs: 300,
-  vadSpeechOffsetMs: 800,
+  noiseGateThresholdDb: -50,
+  vadSpeechOnsetMs: 200,
+  vadSpeechOffsetMs: 600,
   ghostModeEnabled: false,
 };
 

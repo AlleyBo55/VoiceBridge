@@ -637,6 +637,7 @@ function SettingsView({ onBack }: { onBack: () => void }) {
   const [targetLang, setTargetLang] = useState('es');
   const [micDevices, setMicDevices] = useState<Array<{ id: string; name: string }>>([]);
   const [selectedMic, setSelectedMic] = useState('');
+  const [vadSensitivity, setVadSensitivity] = useState('medium');
 
   const refreshVoices = useCallback(async () => {
     setLoadingVoices(true);
@@ -667,6 +668,8 @@ function SettingsView({ onBack }: { onBack: () => void }) {
         setSelectedMic(real?.id ?? devices[0]?.id ?? '');
       }
     } catch {}
+    const vad = await vb.getSetting('vadSensitivity') as string;
+    if (vad) setVadSensitivity(vad);
     await refreshVoices();
   })(); }, [refreshVoices]);
 
@@ -874,6 +877,23 @@ function SettingsView({ onBack }: { onBack: () => void }) {
             <option key={d.id} value={d.id}>{d.name}{d.name.toLowerCase().includes('blackhole') ? ' ⚠️ (virtual output)' : ''}</option>
           ))}
         </select>
+      </div>
+
+      {/* VAD Sensitivity */}
+      <div class="card" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+        <div class="label">VOICE DETECTION SENSITIVITY</div>
+        <select class="input-field" value={vadSensitivity} onChange={async (e) => {
+          const val = (e.target as HTMLSelectElement).value;
+          setVadSensitivity(val);
+          await vb.setSetting('vadSensitivity', val);
+        }}>
+          <option value="low">Low — noisy environment, only loud speech triggers</option>
+          <option value="medium">Medium — balanced (default)</option>
+          <option value="high">High — quiet environment, catches whispers</option>
+        </select>
+        <div class="mono" style={{ fontSize: '10px', color: 'var(--text-disabled)' }}>
+          Controls how sensitive the mic is to detecting speech vs silence
+        </div>
       </div>
 
       {/* Voice Profiles — multi-voice */}
