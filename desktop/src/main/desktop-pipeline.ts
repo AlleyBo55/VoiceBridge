@@ -129,15 +129,11 @@ export class DesktopPipeline {
     this.#emitConnectionState('stt', { status: 'connecting', attempt: 0 });
     await this.#connectSTT();
 
-    // 2. Connect TTS WebSocket
-    this.#debugLog.log('info', 'pipeline', 'Connecting TTS...');
-    this.#emitConnectionState('tts', { status: 'connecting', attempt: 0 });
-    await this.#connectTTS();
-
-    // 3. Mark LLM as connected (it's HTTP, always available if key exists)
+    // 2. LLM + TTS use REST APIs — no WebSocket needed
     if (this.#llmApiKey) {
       this.#emitConnectionState('llm', { status: 'connected' });
     }
+    this.#emitConnectionState('tts', { status: 'connected' });
 
     // 4. Start audio capture
     const ghostMode = await this.#settings.get('ghostMode');
@@ -202,19 +198,10 @@ export class DesktopPipeline {
 
     // Disconnect STT
     if (this.#sttWs) {
-      try { this.#sttWs.send(JSON.stringify({ message_type: 'close_stream' })); } catch(_e) {}
-      this.#sttWs.close();
+      try { this.#sttWs.close(); } catch(_e) {}
       this.#sttWs = null;
     }
     if (this.#sttHeartbeat) { clearInterval(this.#sttHeartbeat); this.#sttHeartbeat = null; }
-
-    // Disconnect TTS
-    if (this.#ttsWs) {
-      try { this.#ttsWs.send(JSON.stringify({ text: '' })); } catch(_e) {}
-      this.#ttsWs.close();
-      this.#ttsWs = null;
-    }
-    if (this.#ttsHeartbeat) { clearInterval(this.#ttsHeartbeat); this.#ttsHeartbeat = null; }
 
     this.#emitConnectionState('stt', { status: 'disconnected' });
     this.#emitConnectionState('tts', { status: 'disconnected' });
@@ -362,12 +349,7 @@ export class DesktopPipeline {
     this.#latencyMonitor.markSTTEnd(this.#currentSequenceId);
     this.#emitStage(this.#currentSequenceId, 'TRANSCRIBED');
 
-    // Send to translation → TTS (reconnect TTS if needed and wait for it to be ready)
-    if (!this.#ttsWs || this.#ttsWs.readyState !== WebSocket.OPEN) {
-      await this.#connectTTS();
-      // Wait for TTS to process init message before sending text
-      await new Promise(r => setTimeout(r, 500));
-    }
+    // Send to translation → REST TTS (no WebSocket needed)
     this.#translateAndSpeak(newText, this.#currentSequenceId);
 
     // Reset STT — its accumulation buffer stops producing new partials once text stabilizes
@@ -475,8 +457,6 @@ export class DesktopPipeline {
                 firstToken = false;
               }
               fullTranslation += token;
-              // Stream token to TTS
-              this.#sendTextToTTS(token);
             }
           } catch(_e2) { /* skip malformed */ }
         }
@@ -484,9 +464,8 @@ export class DesktopPipeline {
 
       if (fullTranslation) {
         this.#debugLog.log('info', 'pipeline', `Translation: "${fullTranslation.slice(0, 80)}"`);
-        // Schedule a delayed flush — batches multiple translations into one TTS generation
-        // This keeps the TTS connection alive longer and reduces reconnect gaps
-        this.#scheduleTTSFlush();
+        // Use REST TTS API — simpler, no WebSocket reconnect issues
+        await this.#speakWithRestTTS(fullTranslation);
       }
 
     } catch (err) {
@@ -498,6 +477,62 @@ export class DesktopPipeline {
   #buildTranslationPrompt(): string {
     const src = this.#sourceLanguage === 'auto' ? 'the detected language' : this.#sourceLanguage;
     return `You are a real-time speech translator. Translate from ${src} to ${this.#targetLanguage}. Output ONLY the translated text. No explanations, no brackets, no notes. Keep it concise and natural.`;
+  }
+
+  // ── REST TTS (replaces WebSocket TTS) ─────────────────────
+
+  /**
+   * Generate speech via ElevenLabs REST API and play it to BlackHole.
+   * Simpler than WebSocket — no reconnect issues, no flush/isFinal dance.
+   * Each call is independent — no shared state to corrupt.
+   */
+  async #speakWithRestTTS(text: string): Promise<void> {
+    if (!text.trim()) return;
+
+    try {
+      const response = await fetch(
+        `https://api.elevenlabs.io/v1/text-to-speech/${this.#voiceId}?output_format=pcm_24000`,
+        {
+          method: 'POST',
+          headers: {
+            'xi-api-key': this.#apiKey,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            text,
+            model_id: 'eleven_flash_v2_5',
+            voice_settings: {
+              stability: this.#voiceStability,
+              similarity_boost: this.#voiceSimilarityBoost,
+              style: this.#voiceStyle,
+            },
+          }),
+          signal: AbortSignal.timeout(15000),
+        }
+      );
+
+      if (!response.ok) {
+        this.#debugLog.log('error', 'pipeline', `TTS REST error: ${response.status}`);
+        return;
+      }
+
+      // Read the entire audio response
+      const audioBuffer = Buffer.from(await response.arrayBuffer());
+      this.#debugLog.log('info', 'pipeline', `TTS REST: ${audioBuffer.length} bytes for "${text.slice(0, 40)}"`);
+
+      if (audioBuffer.length > 0) {
+        this.#latencyMonitor.markTTSFirstByte(this.#currentSequenceId);
+        this.#emitStage(this.#currentSequenceId, 'SYNTHESIZED');
+
+        // Resample 24kHz → 48kHz and write to BlackHole
+        const resampled = this.#nativeAddon.resample(audioBuffer, 24000, 48000);
+        this.#nativeAddon.writeVirtualMic(resampled);
+
+        this.#emitStage(this.#currentSequenceId, 'PLAYED');
+      }
+    } catch (err) {
+      this.#debugLog.log('error', 'pipeline', `TTS REST failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   // ── TTS Connection ────────────────────────────────────────
