@@ -763,21 +763,27 @@ function App() {
   // Load initial settings
   useEffect(() => {
     (async () => {
-      const onboarded = await vb.getSetting('onboardingComplete') as boolean;
-      const elKey = await vb.getSetting('elevenLabsApiKey') as string;
-      const hasKeys = Boolean(elKey && elKey.length > 0);
+      try {
+        const onboarded = await vb.getSetting('onboardingComplete') as boolean;
+        const elKey = await vb.getSetting('elevenLabsApiKey') as string;
+        const hasKeys = Boolean(elKey && elKey.length > 0);
 
-      dispatch({ type: 'SET_API_KEYS', hasKeys });
-      dispatch({ type: 'SET_ONBOARDING', complete: onboarded && hasKeys });
+        dispatch({ type: 'SET_API_KEYS', hasKeys });
+        dispatch({ type: 'SET_ONBOARDING', complete: onboarded && hasKeys });
 
-      const src = await vb.getSetting('sourceLanguage') as string;
-      const tgt = await vb.getSetting('targetLanguage') as string;
-      dispatch({ type: 'SET_LANGUAGES', source: src ?? 'auto', target: tgt ?? 'es' });
+        const src = await vb.getSetting('sourceLanguage') as string;
+        const tgt = await vb.getSetting('targetLanguage') as string;
+        dispatch({ type: 'SET_LANGUAGES', source: src ?? 'auto', target: tgt ?? 'es' });
 
-      const driverStatus = await vb.getDriverStatus();
-      dispatch({ type: 'SET_DRIVER', installed: driverStatus.state === 'installed' });
-
-      dispatch({ type: 'SET_LOADED' });
+        try {
+          const driverStatus = await vb.getDriverStatus();
+          dispatch({ type: 'SET_DRIVER', installed: driverStatus.state === 'installed' });
+        } catch { /* driver check failed — not critical */ }
+      } catch (err) {
+        console.error('[VB] Settings load failed:', err);
+      } finally {
+        dispatch({ type: 'SET_LOADED' });
+      }
     })();
   }, []);
 
