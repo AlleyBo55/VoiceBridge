@@ -6,7 +6,7 @@
 
 import { app, BrowserWindow, Tray, Menu, nativeImage, globalShortcut, ipcMain } from 'electron';
 import { join } from 'path';
-import { MockNativeAddon } from '../native/native-addon.js';
+import { createNativeAddon } from '../native/native-addon.js';
 import { DesktopSettingsStore } from './desktop-settings-store.js';
 import { DesktopPipeline } from './desktop-pipeline.js';
 import { DesktopDebugLog } from './desktop-debug-log.js';
@@ -22,7 +22,7 @@ import { handleInvoke, sendToRenderer } from './electron-ipc.js';
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 
-const nativeAddon = new MockNativeAddon();
+const nativeAddon = createNativeAddon();
 const debugLog = new DesktopDebugLog();
 const settings = new DesktopSettingsStore();
 let pipeline: DesktopPipeline;
