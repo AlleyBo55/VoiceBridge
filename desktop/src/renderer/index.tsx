@@ -1161,7 +1161,7 @@ function App() {
                 const result = await vb.installDriver();
                 if (result.success) {
                   setInstallPercent(100);
-                  setInstallMessage('Done!');
+                  setInstallMessage(result.requiresReboot ? 'Installed! Restart your computer to activate the virtual mic.' : 'Done!');
                   dispatch({ type: 'SET_DRIVER', installed: true });
                 } else {
                   setInstalling(false);

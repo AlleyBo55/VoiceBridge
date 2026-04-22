@@ -134,7 +134,7 @@ export class DriverInstaller {
   #detectMacOS(): { installed: boolean; name: string } {
     // Check brew first — most reliable since we install via brew
     try {
-      const brewList = execSync('brew list blackhole-2ch 2>/dev/null', { encoding: 'utf8', timeout: 5000 });
+      const brewList = execSync('brew list --cask blackhole-2ch 2>/dev/null', { encoding: 'utf8', timeout: 5000 });
       if (brewList.trim().length > 0) return { installed: true, name: 'BlackHole 2ch' };
     } catch { /* not installed via brew */ }
 
@@ -215,143 +215,105 @@ export class DriverInstaller {
     // 2. Check if already installed
     p(10, 'Checking existing installation...');
     try {
-      const check = execSync('brew list blackhole-2ch 2>/dev/null', { encoding: 'utf8', timeout: 5000 });
+      const check = execSync('brew list --cask blackhole-2ch 2>/dev/null', { encoding: 'utf8', timeout: 5000 });
       if (check.trim().length > 0) {
         p(100, 'Already installed');
         return { success: true };
       }
     } catch { /* not installed — continue */ }
 
-    // 3. Install via brew with progress tracking
-    p(15, 'Downloading BlackHole 2ch...');
-    this.#debugLog.log('info', 'audio', 'Running: brew install blackhole-2ch');
+    // 3. Install via brew — BlackHole is a cask that needs sudo for the pkg installer.
+    // We open a real Terminal window so the user can enter their password.
+    p(15, 'Opening Terminal for installation...');
+    this.#debugLog.log('info', 'audio', 'Running: brew install --cask blackhole-2ch (in Terminal)');
 
     return new Promise((resolve) => {
+      // Use osascript to open Terminal with the brew command
+      const script = `
+        tell application "Terminal"
+          activate
+          do script "echo '=== VoiceBridge: Installing BlackHole virtual audio driver ===' && brew install --cask blackhole-2ch && echo '' && echo '✅ Done! You can close this window.' || echo '' && echo '❌ Install failed. Check the error above.'"
+        end tell
+      `.trim();
+
       const { spawn: spawnProcess } = require('child_process') as typeof import('child_process');
-      const child = spawnProcess('brew', ['install', 'blackhole-2ch'], {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: 120000,
-      });
-
-      let output = '';
-      let lastProgress = 15;
-      const startTime = Date.now();
-
-      // Tick progress based on elapsed time (brew doesn't give %)
-      const progressTimer = setInterval(() => {
-        const elapsed = Date.now() - startTime;
-        // Estimate: downloading ~30s, installing ~30s
-        if (elapsed < 30000) {
-          lastProgress = Math.min(50, 15 + Math.floor((elapsed / 30000) * 35));
-          p(lastProgress, 'Downloading BlackHole 2ch...');
-        } else if (elapsed < 60000) {
-          lastProgress = Math.min(80, 50 + Math.floor(((elapsed - 30000) / 30000) * 30));
-          p(lastProgress, 'Installing audio driver...');
-        } else if (elapsed < 90000) {
-          lastProgress = Math.min(90, 80 + Math.floor(((elapsed - 60000) / 30000) * 10));
-          p(lastProgress, 'Configuring CoreAudio...');
-        } else {
-          p(90, 'Still working... this can take a while');
-        }
-      }, 1000);
-
-      child.stdout?.on('data', (data: Buffer) => { output += data.toString(); });
-      child.stderr?.on('data', (data: Buffer) => { output += data.toString(); });
+      const child = spawnProcess('osascript', ['-e', script], { stdio: 'ignore' });
 
       child.on('error', (err: Error) => {
-        clearInterval(progressTimer);
-        if (err.message.includes('ETIMEDOUT') || err.message.includes('timeout')) {
-          p(0, 'Timed out');
-          resolve({
-            success: false,
-            error: [
-              'Installation timed out after 2 minutes.',
-              '',
-              'This usually means a slow network connection.',
-              'Try manually in Terminal:',
-              '  brew install blackhole-2ch',
-              '',
-              'Then restart VoiceBridge.',
-            ].join('\n'),
-          });
-        } else {
-          p(0, 'Error');
-          resolve({ success: false, error: `Install error: ${err.message}` });
-        }
+        p(0, 'Failed to open Terminal');
+        resolve({
+          success: false,
+          error: [
+            'Could not open Terminal for installation.',
+            '',
+            'Please install manually:',
+            '1. Open Terminal',
+            '2. Run: brew install --cask blackhole-2ch',
+            '3. Enter your password when prompted',
+            '4. Reboot your Mac',
+            '5. Restart VoiceBridge',
+          ].join('\n'),
+        });
       });
 
-      child.on('close', (code: number | null) => {
-        clearInterval(progressTimer);
-
-        if (code === 0 || output.includes('already installed')) {
-          p(95, 'Verifying installation...');
-
-          // Restart coreaudiod to pick up the new device
-          try {
-            execSync('sudo launchctl kickstart -kp system/com.apple.audio.coreaudiod 2>/dev/null || true', { timeout: 5000 });
-          } catch { /* may need sudo */ }
-
-          p(100, 'Installed successfully');
-          resolve({ success: true });
-          return;
-        }
-
-        // Parse error
-        if (output.includes('Permission denied') || output.includes('EPERM')) {
-          p(0, 'Permission denied');
-          resolve({
-            success: false,
-            error: [
-              'Permission denied during install.',
-              '',
-              'To fix this:',
-              '1. Open Terminal',
-              '2. Run: brew install blackhole-2ch',
-              '3. If prompted, enter your password',
-              '4. Restart VoiceBridge',
-            ].join('\n'),
-          });
-        } else if (output.includes('Xcode') || output.includes('CLT')) {
-          p(0, 'Xcode CLT required');
-          resolve({
-            success: false,
-            error: [
-              'Xcode Command Line Tools required.',
-              '',
-              'To fix this:',
-              '1. Open Terminal',
-              '2. Run: xcode-select --install',
-              '3. Wait for installation to complete',
-              '4. Run: brew install blackhole-2ch',
-              '5. Restart VoiceBridge',
-            ].join('\n'),
-          });
-        } else if (output.includes('Network') || output.includes('curl') || output.includes('Could not resolve')) {
-          p(0, 'Network error');
-          resolve({
-            success: false,
-            error: [
-              'Network error — cannot reach Homebrew servers.',
-              '',
-              'Check your internet connection and try again.',
-              'Or install BlackHole manually: https://existential.audio/blackhole/',
-            ].join('\n'),
-          });
-        } else {
-          p(0, 'Failed');
-          resolve({
-            success: false,
-            error: [
-              'Homebrew install failed.',
-              '',
-              'Try manually in Terminal:',
-              '  brew install blackhole-2ch',
-              '',
-              `Error: ${output.slice(0, 300)}`,
-            ].join('\n'),
-          });
-        }
+      child.on('close', () => {
+        p(30, 'Terminal opened — enter your password if prompted...');
       });
+
+      // Poll for installation completion
+      let pollCount = 0;
+      const maxPolls = 120; // 2 minutes at 1s intervals
+      const pollTimer = setInterval(() => {
+        pollCount++;
+
+        // Update progress based on time
+        const pct = Math.min(90, 30 + Math.floor((pollCount / maxPolls) * 60));
+        if (pollCount < 10) p(pct, 'Waiting for password prompt...');
+        else if (pollCount < 30) p(pct, 'Installing BlackHole driver...');
+        else if (pollCount < 60) p(pct, 'Still installing...');
+        else p(pct, 'Taking a while — check Terminal window');
+
+        // Check if installed
+        try {
+          const check = execSync('brew list --cask blackhole-2ch 2>/dev/null', { encoding: 'utf8', timeout: 3000 });
+          if (check.trim().length > 0) {
+            clearInterval(pollTimer);
+            p(100, 'Installed! Restart your computer to activate.');
+            resolve({
+              success: true,
+              requiresReboot: true,
+            });
+            return;
+          }
+        } catch { /* not yet */ }
+
+        // Timeout
+        if (pollCount >= maxPolls) {
+          clearInterval(pollTimer);
+          // One final check
+          const finalCheck = this.#checkRealDriver();
+          if (finalCheck.installed) {
+            p(100, 'Installed!');
+            resolve({ success: true });
+          } else {
+            p(0, 'Timed out');
+            resolve({
+              success: false,
+              error: [
+                'Installation timed out.',
+                '',
+                'Check the Terminal window for errors.',
+                'If it asks for a password, enter it and wait.',
+                '',
+                'Or install manually:',
+                '  brew install --cask blackhole-2ch',
+                '',
+                'After install, reboot your Mac.',
+              ].join('\n'),
+            });
+          }
+        }
+      }, 1000);
     });
   }
 
