@@ -512,27 +512,23 @@ export class DesktopPipeline {
     }
   }
 
+  #ttsMessageCount = 0;
+
   #handleTTSMessage(data: Buffer | string): void {
-    // Binary audio — PCM Int16 24kHz
-    if (Buffer.isBuffer(data) && data.length > 0) {
-      this.#latencyMonitor.markTTSFirstByte(this.#currentSequenceId);
-      this.#emitStage(this.#currentSequenceId, 'SYNTHESIZED');
+    this.#ttsMessageCount++;
 
-      // Write TTS audio to BlackHole via native addon
-      this.#audioRouter.writeTTSAudio(data);
-      this.#audioRouter.transitionRouting({ type: 'tts_start' });
-      return;
-    }
-
-    // JSON message
+    // Try JSON first — TTS sends base64 audio in JSON messages
+    const str = typeof data === 'string' ? data : data.toString('utf8');
     try {
-      const msg = JSON.parse(typeof data === 'string' ? data : data.toString()) as {
-        audio?: string;
-        isFinal?: boolean;
-      };
+      const msg = JSON.parse(str) as { audio?: string; isFinal?: boolean; message?: string };
 
       if (msg.audio) {
         const audioBuffer = Buffer.from(msg.audio, 'base64');
+        if (this.#ttsMessageCount <= 3 || this.#ttsMessageCount % 20 === 0) {
+          this.#debugLog.log('info', 'pipeline', `TTS audio chunk #${this.#ttsMessageCount}: ${audioBuffer.length} bytes`);
+        }
+        this.#latencyMonitor.markTTSFirstByte(this.#currentSequenceId);
+        this.#emitStage(this.#currentSequenceId, 'SYNTHESIZED');
         this.#audioRouter.writeTTSAudio(audioBuffer);
         this.#audioRouter.transitionRouting({ type: 'tts_start' });
       }
@@ -541,8 +537,21 @@ export class DesktopPipeline {
         this.#audioRouter.transitionRouting({ type: 'tts_end' });
         this.#latencyMonitor.markPlaybackStart(this.#currentSequenceId);
         this.#emitStage(this.#currentSequenceId, 'PLAYED');
-        this.#debugLog.log('info', 'pipeline', `Utterance ${this.#currentSequenceId} played`);
+        this.#debugLog.log('info', 'pipeline', `Utterance ${this.#currentSequenceId} played (${this.#ttsMessageCount} TTS messages)`);
+        this.#ttsMessageCount = 0;
       }
+
+      return;
+    } catch {
+      // Not JSON — treat as raw binary PCM
+    }
+
+    // Raw binary audio fallback
+    if (Buffer.isBuffer(data) && data.length > 100) {
+      this.#debugLog.log('info', 'pipeline', `TTS raw binary: ${data.length} bytes`);
+      this.#audioRouter.writeTTSAudio(data);
+      this.#audioRouter.transitionRouting({ type: 'tts_start' });
+    }
     } catch { /* skip */ }
   }
 
