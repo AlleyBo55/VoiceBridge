@@ -157,6 +157,7 @@ export class PipelineOrchestrator {
     }
 
     this.#transitionRouting({ type: 'session_start' }); this.#startHeartbeat(); this.#emitSessionState();
+    sendMessage('PIPELINE_STAGE_UPDATE', { stage: 'IDLE' });
     log('info', 'pipeline', 'Session started', {
       source: params.sourceLanguage, target: params.targetLanguage,
       voiceId: effectiveVoiceId, llmProvider, hasVoiceClone: !!voiceId,
@@ -169,6 +170,7 @@ export class PipelineOrchestrator {
     this.#sessionActive = false;
     log('info', 'pipeline', `Session stopping: ${reason}`);
     this.#transitionRouting({ type: 'session_stop' }); this.#clearAllTimers();
+    sendMessage('PIPELINE_STAGE_UPDATE', { stage: 'IDLE' });
     await this.#executeCleanup(); this.#emitSessionState();
   }
   /** Called by AudioCaptureModule when VAD detects speech end. */
@@ -181,7 +183,9 @@ export class PipelineOrchestrator {
     this.#latencyMonitor?.markCaptureEnd(seqId);
     this.#setStageTimeout(seqId, 'stt', this.#config.sttTimeoutMs);
     this.#enforceBackpressure(); this.#evictCompletedUtterances();
-    sendMessage('UTTERANCE_STATE_CHANGED', { sequenceId: seqId, state: 'CAPTURED' }); this.#emitSessionState();
+    sendMessage('UTTERANCE_STATE_CHANGED', { sequenceId: seqId, state: 'CAPTURED' });
+    sendMessage('PIPELINE_STAGE_UPDATE', { stage: 'CAPTURED' });
+    this.#emitSessionState();
   }
   /** Called by STTClient on final transcript. */
   handleFinalTranscript(sequenceId: number, text: string, language: string): void {
@@ -225,6 +229,11 @@ export class PipelineOrchestrator {
       this.#transitionUtterance(sequenceId, 'SYNTHESIZED');
     }
     utt.audioChunks.push(pcm.buffer as ArrayBuffer); this.#advancePlayback();
+
+    // Forward TTS PCM to content script via service worker relay
+    const pcmArray = Array.from(pcm);
+    sendMessage('TTS_AUDIO_TO_MEETING', { pcm: pcmArray, sequenceId });
+    log('info', 'pipeline', `TTS audio chunk sent to meeting (${pcm.length} samples, seq=${sequenceId})`);
   }
   /** Called by AudioOutputModule when playback finishes. */
   handlePlaybackEnd(sequenceId: number): void {
@@ -259,6 +268,7 @@ export class PipelineOrchestrator {
     if (!utt || !VALID_NEXT[utt.state]?.includes(to)) return;
     const from = utt.state; utt.state = to;
     sendMessage('UTTERANCE_STATE_CHANGED', { sequenceId, state: to });
+    sendMessage('PIPELINE_STAGE_UPDATE', { stage: to });
     log('info', 'pipeline', `Utterance ${sequenceId}: ${from}→${to}`);
   }
   #dropUtterance(sequenceId: number, reason: string): void {
