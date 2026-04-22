@@ -185,7 +185,7 @@ export class DesktopPipeline {
 
     // Disconnect STT
     if (this.#sttWs) {
-      try { this.#sttWs.send(JSON.stringify({ message_type: 'close_stream' })); } catch {}
+      try { this.#sttWs.send(JSON.stringify({ message_type: 'close_stream' })); } catch(_e) {}
       this.#sttWs.close();
       this.#sttWs = null;
     }
@@ -193,7 +193,7 @@ export class DesktopPipeline {
 
     // Disconnect TTS
     if (this.#ttsWs) {
-      try { this.#ttsWs.send(JSON.stringify({ text: '' })); } catch {}
+      try { this.#ttsWs.send(JSON.stringify({ text: '' })); } catch(_e) {}
       this.#ttsWs.close();
       this.#ttsWs = null;
     }
@@ -232,7 +232,7 @@ export class DesktopPipeline {
         // Heartbeat
         this.#sttHeartbeat = setInterval(() => {
           if (ws.readyState === WebSocket.OPEN) {
-            try { ws.send(Buffer.alloc(0)); } catch {}
+            try { ws.send(Buffer.alloc(0)); } catch(_e) {}
           }
         }, HEARTBEAT_INTERVAL_MS);
 
@@ -297,7 +297,7 @@ export class DesktopPipeline {
       if (msgType === 'input_error') {
         this.#debugLog.log('warn', 'pipeline', `STT input_error: ${JSON.stringify(msg['error'])}`);
       }
-    } catch {
+    } catch(_e) {
       this.#debugLog.log('error', 'pipeline', 'STT message parse error');
     }
   }
@@ -423,7 +423,7 @@ export class DesktopPipeline {
               // Stream token to TTS
               this.#sendTextToTTS(token);
             }
-          } catch { /* skip malformed */ }
+          } catch(_e2) { /* skip malformed */ }
         }
       }
 
@@ -474,7 +474,7 @@ export class DesktopPipeline {
         // Heartbeat
         this.#ttsHeartbeat = setInterval(() => {
           if (ws.readyState === WebSocket.OPEN) {
-            try { ws.send(Buffer.alloc(0)); } catch {}
+            try { ws.send(Buffer.alloc(0)); } catch(_e) {}
           }
         }, HEARTBEAT_INTERVAL_MS);
 
@@ -500,15 +500,22 @@ export class DesktopPipeline {
     });
   }
 
+  #ttsSentChars = 0;
+
   #sendTextToTTS(text: string): void {
     if (this.#ttsWs?.readyState === WebSocket.OPEN) {
+      this.#ttsSentChars += text.length;
       this.#ttsWs.send(JSON.stringify({ text }));
+    } else {
+      this.#debugLog.log('warn', 'pipeline', `TTS WebSocket not open (state=${this.#ttsWs?.readyState}), dropping text`);
     }
   }
 
   #flushTTS(): void {
     if (this.#ttsWs?.readyState === WebSocket.OPEN) {
+      this.#debugLog.log('info', 'pipeline', `TTS flush — sent ${this.#ttsSentChars} chars total`);
       this.#ttsWs.send(JSON.stringify({ text: '', flush: true }));
+      this.#ttsSentChars = 0;
     }
   }
 
@@ -517,8 +524,14 @@ export class DesktopPipeline {
   #handleTTSMessage(data: Buffer | string): void {
     this.#ttsMessageCount++;
 
-    // Try JSON first — TTS sends base64 audio in JSON messages
     const str = typeof data === 'string' ? data : data.toString('utf8');
+
+    // Log first few messages for debugging
+    if (this.#ttsMessageCount <= 5) {
+      this.#debugLog.log('info', 'pipeline', `TTS msg #${this.#ttsMessageCount}: ${str.slice(0, 100)}`);
+    }
+
+    // Try JSON first — TTS sends base64 audio in JSON messages
     try {
       const msg = JSON.parse(str) as { audio?: string; isFinal?: boolean; message?: string };
 
@@ -542,7 +555,7 @@ export class DesktopPipeline {
       }
 
       return;
-    } catch {
+    } catch(_e) {
       // Not JSON — treat as raw binary PCM
     }
 
@@ -552,7 +565,6 @@ export class DesktopPipeline {
       this.#audioRouter.writeTTSAudio(data);
       this.#audioRouter.transitionRouting({ type: 'tts_start' });
     }
-    } catch { /* skip */ }
   }
 
   // ── IPC Helpers ───────────────────────────────────────────
