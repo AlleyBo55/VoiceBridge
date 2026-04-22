@@ -30,32 +30,6 @@ VoiceBridge captures your microphone, transcribes your speech, translates it thr
 
 ---
 
-## Why a Desktop App (Not a Chrome Extension)
-
-VoiceBridge started as a Chrome Extension (Phase 1 & 2). We built the full pipeline — STT, translation, TTS, echo cancellation, platform adapters for Meet/Teams/Discord/Zoom. It worked architecturally. But Chrome extensions have a fundamental limitation:
-
-**They can't create a virtual microphone.**
-
-Chrome extensions can only intercept WebRTC connections inside the browser via `replaceTrack()`. This means:
-- Each meeting platform needs a custom adapter that breaks when the platform updates
-- Content scripts can't reliably inject into all URLs (Teams uses `teams.cloud.microsoft`, not `teams.microsoft.com`)
-- The audio bridge between the offscreen document and content script is fragile
-- It only works in Chrome, only in the browser, only on supported platforms
-
-The desktop app solves all of this by operating at the OS audio layer:
-
-```
-Chrome Extension (old):
-  Content Script → getUserMedia intercept → WebRTC replaceTrack → One Meeting App
-
-Desktop App (new):
-  Native Addon → Real Mic → Pipeline → Virtual Mic Driver → ANY App
-```
-
-Install VoiceBridge. Select "VoiceBridge Mic" as your microphone in Teams, Zoom, Meet, Discord, Slack, FaceTime, WhatsApp — anything. Done.
-
----
-
 ## The Pipeline
 
 ```
@@ -128,26 +102,6 @@ Five stages. Under 1.5 seconds. Works everywhere.
 | Windows | WASAPI Virtual Audio Endpoint | Administrator elevation |
 | Linux | PulseAudio null sink + module-loopback | User-space (no elevation) |
 
-### Module Reuse from Chrome Extension
-
-| Module | Status | Notes |
-|--------|--------|-------|
-| PipelineOrchestrator | Reuse | Replace chrome.* with Electron IPC |
-| STTClient | Reuse | Pure WebSocket — no changes |
-| TranslationEngine | Reuse | Pure HTTP streaming — no changes |
-| TTSClient | Reuse | Pure WebSocket — no changes |
-| EchoCancellationModule | Reuse | Pure state machine — no changes |
-| LatencyMonitor | Reuse | Pure timing logic — no changes |
-| DegradationManager | Reuse | Pure state computation — no changes |
-| CleanupSequencer | Reuse | Pure cleanup orchestration — no changes |
-| AudioCaptureModule | Replace | N-API native capture instead of getUserMedia |
-| AudioOutputModule | Replace | N-API virtual mic write instead of WebRTC |
-| SettingsStore | Replace | Filesystem JSON + Node.js crypto instead of chrome.storage |
-| MessageBus | Replace | Electron IPC instead of chrome.runtime.sendMessage |
-| MeetingDetector | Remove | Not needed — virtual mic works with any app |
-| PlatformAdapters | Remove | Not needed — no per-app injection |
-| AudioBridge | Remove | Not needed — direct N-API calls |
-
 ---
 
 ## Features
@@ -175,32 +129,25 @@ OLED blacks. Space Mono labels. Mechanical toggles. System tray app that stays o
 
 ```bash
 git clone https://github.com/AlleyBo55/VoiceBridge.git
-cd VoiceBridge
+cd VoiceBridge/desktop
 npm install
 ```
 
-### 2. Set up your API keys
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env`:
-
-```env
-VITE_DEMO_ELEVENLABS_KEY=xi-your-key-here
-VITE_DEMO_LLM_PROVIDER=openrouter
-VITE_DEMO_LLM_KEY=sk-or-your-key-here
-VITE_DEMO_OPENROUTER_MODEL=openai/gpt-4o
-VITE_DEMO_UNLIMITED=true
-```
-
-### 3. Build and run
+### 2. Build and run
 
 ```bash
 npm run build
 npm start
 ```
+
+### 3. Enter your API keys
+
+On first launch, VoiceBridge asks for your API keys:
+
+- **ElevenLabs API key** — for speech-to-text (Scribe) and text-to-speech (voice cloning)
+- **LLM API key** — for translation (OpenAI, Anthropic, or OpenRouter)
+
+Keys are encrypted with AES-GCM-256 and stored locally. Never sent anywhere except the API providers. You can change them anytime in Settings.
 
 ### 4. Use it
 
@@ -237,6 +184,7 @@ npm start
 - Audio is streamed, never stored — not on disk, not after session ends
 - API keys encrypted with AES-GCM-256 via Node.js crypto
 - No analytics. No tracking. No telemetry.
+- No embedded keys — the build ships completely empty
 - API keys never leave the main process — renderer has no access
 - Panic button (Ctrl/Cmd+Shift+X) kills everything instantly
 
@@ -255,12 +203,57 @@ npm start
 ## Development
 
 ```bash
+cd desktop
 npm install          # Install dependencies
 npm run build        # Build desktop app
 npm start            # Launch app
-npm run test         # Run tests
+npm run test         # Run tests (42 property-based tests)
 npm run typecheck    # TypeScript strict check
 ```
+
+### Project Structure
+
+```
+desktop/
+├── src/
+│   ├── main/           # Electron main process
+│   │   ├── main.ts             # Entry point, tray, window, IPC handlers
+│   │   ├── audio-router.ts     # Mic capture, VAD, noise gate, virtual mic output
+│   │   ├── desktop-pipeline.ts # Pipeline adapter (wraps existing orchestrator)
+│   │   ├── desktop-settings-store.ts  # AES-GCM-256 encrypted JSON settings
+│   │   ├── desktop-latency.ts  # Latency monitor with color mapping
+│   │   ├── desktop-debug-log.ts # 500-entry ring buffer
+│   │   ├── driver-installer.ts # Virtual mic driver install/uninstall
+│   │   ├── auto-start.ts       # Login item management
+│   │   ├── language-service.ts  # Language list caching + filtering
+│   │   ├── panic-stop.ts       # Global Cmd/Ctrl+Shift+X
+│   │   └── electron-ipc.ts     # Typed IPC with validation
+│   ├── native/         # N-API addon interface (Rust, mock for dev)
+│   ├── preload/        # contextBridge API (security boundary)
+│   ├── renderer/       # Preact UI (Nothing design system)
+│   └── shared/         # Types, platform utilities
+├── tests/
+│   └── properties/     # Property-based tests (fast-check)
+└── package.json
+```
+
+### Reused Modules (from `src/lib/`)
+
+The desktop app reuses these pure-logic modules unchanged:
+
+| Module | Purpose |
+|--------|---------|
+| `stt-client.ts` | ElevenLabs Scribe v2 WebSocket client |
+| `tts-client.ts` | ElevenLabs Flash v2.5 WebSocket client |
+| `translation-engine.ts` | LLM streaming translation (OpenAI/Anthropic/OpenRouter) |
+| `echo-cancellation.ts` | Three-state echo cancellation machine |
+| `audio-routing.ts` | Pure audio routing state machine |
+| `degradation-manager.ts` | Graceful degradation cascade |
+| `cleanup-sequencer.ts` | Deterministic ordered cleanup |
+| `latency-monitor.ts` | Per-stage timing |
+| `debug-log.ts` | Circular log buffer |
+| `languages.ts` | Language list |
+| `types.ts` | All shared type definitions |
 
 ---
 
@@ -280,27 +273,15 @@ MIT — use it, fork it, ship it.
 
 ---
 
-## License
-
-MIT — use it, fork it, ship it.
-
----
-
 ## Built With Spec-Driven Development
 
-This entire project was built using [Kiro](https://kiro.dev)'s spec-driven development — you write specifications for what you want to build, and the AI agent helps you implement them systematically. Every feature started as a requirement, became a design, then became code. No guessing. No "let me just hack this together." Every decision is documented, every state machine is specified, every correctness property is testable.
-
-Here's the thing about building software: most people start coding and figure out the architecture later. We did the opposite. We wrote the spec first. Then we built exactly what the spec said. And when the spec was wrong — when Chrome extensions couldn't create virtual microphones — we wrote a new spec and rebuilt.
-
-That's not slower. That's faster. Because you never build the wrong thing twice.
+This entire project was built using [Kiro](https://kiro.dev)'s spec-driven development — you write specifications for what you want to build, and the AI agent helps you implement them systematically. Every feature started as a requirement, became a design, then became code.
 
 ### The Specs
 
-Every document that drove this project is open and readable:
-
 **Phase 1 — Chrome Extension (Core Pipeline)**
 - [Requirements](.kiro/specs/voice-translate-chrome-extension/requirements.md) — 34 requirements, 200+ acceptance criteria
-- [Design](.kiro/specs/voice-translate-chrome-extension/design.md) — system architecture, state machines, WebSocket protocols, data models
+- [Design](.kiro/specs/voice-translate-chrome-extension/design.md) — system architecture, state machines, WebSocket protocols
 - [Tasks](.kiro/specs/voice-translate-chrome-extension/tasks.md) — 30 implementation tasks
 
 **Phase 2 — Pipeline Hardening**
@@ -316,12 +297,6 @@ Every document that drove this project is open and readable:
 ### The Hackathon
 
 Built for [ElevenLabs × Kiro Hackathon (Hack #5)](https://hacks.elevenlabs.io/hackathons/4) — a weekly hackathon challenging developers to build AI-powered apps using Kiro's spec-driven development and ElevenLabs APIs.
-
-The challenge: *"Build an AI-powered app using Kiro's spec-driven development and ElevenLabs APIs."*
-
-We built a real-time voice translator that clones your voice and speaks in any language. In under two seconds. Using a virtual microphone that works in every meeting app on every operating system.
-
-We didn't just use the APIs. We pushed them to their limits — Scribe v2 Realtime for 150ms speech-to-text, Flash v2.5 for 75ms voice synthesis, clause-level chunking for faster-than-sentence translation. And we documented every decision in specs that anyone can read, fork, and build on.
 
 ---
 
