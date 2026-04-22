@@ -758,20 +758,23 @@ function SettingsView({ onBack }: { onBack: () => void }) {
           <select class="input-field" value={llmModel} onChange={(e) => setLlmModel((e.target as HTMLSelectElement).value)}>
             {llmProvider === 'openrouter' && <>
               <optgroup label="OpenAI">
+                <option value="openai/gpt-5.4">GPT-5.4</option>
+                <option value="openai/gpt-5.4-mini">GPT-5.4 Mini</option>
                 <option value="openai/gpt-4o">GPT-4o</option>
                 <option value="openai/gpt-4o-mini">GPT-4o Mini</option>
-                <option value="openai/gpt-4.1">GPT-4.1</option>
-                <option value="openai/gpt-4.1-mini">GPT-4.1 Mini</option>
+                <option value="openai/o3-pro">o3 Pro</option>
                 <option value="openai/o3-mini">o3 Mini</option>
               </optgroup>
               <optgroup label="Anthropic">
+                <option value="anthropic/claude-opus-4.6">Claude Opus 4.6</option>
                 <option value="anthropic/claude-sonnet-4">Claude Sonnet 4</option>
                 <option value="anthropic/claude-3.5-haiku">Claude 3.5 Haiku</option>
               </optgroup>
               <optgroup label="Google">
+                <option value="google/gemini-3.1-pro">Gemini 3.1 Pro</option>
+                <option value="google/gemini-3.1-flash-lite">Gemini 3.1 Flash Lite</option>
                 <option value="google/gemini-2.5-flash">Gemini 2.5 Flash</option>
                 <option value="google/gemini-2.5-pro">Gemini 2.5 Pro</option>
-                <option value="google/gemini-2.0-flash-001">Gemini 2.0 Flash</option>
               </optgroup>
               <optgroup label="DeepSeek">
                 <option value="deepseek/deepseek-chat-v3-0324">DeepSeek V3</option>
@@ -783,15 +786,25 @@ function SettingsView({ onBack }: { onBack: () => void }) {
               <optgroup label="GLM (Zhipu)">
                 <option value="zhipu/glm-4-plus">GLM-4 Plus</option>
               </optgroup>
+              <optgroup label="xAI">
+                <option value="x-ai/grok-4">Grok 4</option>
+                <option value="x-ai/grok-3-mini">Grok 3 Mini</option>
+              </optgroup>
+              <optgroup label="Qwen (Alibaba)">
+                <option value="qwen/qwen3-235b-a22b">Qwen 3 235B</option>
+                <option value="qwen/qwen3-30b-a3b">Qwen 3 30B</option>
+              </optgroup>
             </>}
             {llmProvider === 'openai' && <>
+              <option value="gpt-5.4">GPT-5.4</option>
+              <option value="gpt-5.4-mini">GPT-5.4 Mini</option>
               <option value="gpt-4o">GPT-4o</option>
               <option value="gpt-4o-mini">GPT-4o Mini</option>
-              <option value="gpt-4.1">GPT-4.1</option>
-              <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
+              <option value="o3-pro">o3 Pro</option>
               <option value="o3-mini">o3 Mini</option>
             </>}
             {llmProvider === 'anthropic' && <>
+              <option value="claude-opus-4-20260301">Claude Opus 4.6</option>
               <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
               <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku</option>
             </>}
