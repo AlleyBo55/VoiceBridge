@@ -21,33 +21,88 @@ declare global {
 
 const vb = window.voicebridge;
 
-// ── Language Options ────────────────────────────────────────
+// ── Language Options (verified against ElevenLabs docs April 2026) ───
 
-const LANG_OPTIONS = [
+/**
+ * STT languages — Scribe v2 Realtime supports 90+ languages.
+ * Used for "I Speak" selector. Auto-detect is default.
+ */
+const STT_LANGUAGES = [
   { code: 'af', name: 'Afrikaans' }, { code: 'ar', name: 'Arabic' },
-  { code: 'hy', name: 'Armenian' }, { code: 'az', name: 'Azerbaijani' },
+  { code: 'hy', name: 'Armenian' }, { code: 'as', name: 'Assamese' },
+  { code: 'az', name: 'Azerbaijani' }, { code: 'be', name: 'Belarusian' },
   { code: 'bn', name: 'Bengali' }, { code: 'bs', name: 'Bosnian' },
   { code: 'bg', name: 'Bulgarian' }, { code: 'ca', name: 'Catalan' },
-  { code: 'zh', name: 'Chinese (Mandarin)' }, { code: 'hr', name: 'Croatian' },
-  { code: 'cs', name: 'Czech' }, { code: 'da', name: 'Danish' },
-  { code: 'nl', name: 'Dutch' }, { code: 'en', name: 'English' },
-  { code: 'et', name: 'Estonian' }, { code: 'fil', name: 'Filipino' },
-  { code: 'fi', name: 'Finnish' }, { code: 'fr', name: 'French' },
+  { code: 'ceb', name: 'Cebuano' }, { code: 'zh', name: 'Chinese (Mandarin)' },
+  { code: 'hr', name: 'Croatian' }, { code: 'cs', name: 'Czech' },
+  { code: 'da', name: 'Danish' }, { code: 'nl', name: 'Dutch' },
+  { code: 'en', name: 'English' }, { code: 'et', name: 'Estonian' },
+  { code: 'fil', name: 'Filipino' }, { code: 'fi', name: 'Finnish' },
+  { code: 'fr', name: 'French' }, { code: 'gl', name: 'Galician' },
   { code: 'ka', name: 'Georgian' }, { code: 'de', name: 'German' },
   { code: 'el', name: 'Greek' }, { code: 'gu', name: 'Gujarati' },
-  { code: 'he', name: 'Hebrew' }, { code: 'hi', name: 'Hindi' },
-  { code: 'hu', name: 'Hungarian' }, { code: 'is', name: 'Icelandic' },
-  { code: 'id', name: 'Indonesian' }, { code: 'it', name: 'Italian' },
-  { code: 'ja', name: 'Japanese' }, { code: 'kn', name: 'Kannada' },
-  { code: 'kk', name: 'Kazakh' }, { code: 'ko', name: 'Korean' },
-  { code: 'lv', name: 'Latvian' }, { code: 'lt', name: 'Lithuanian' },
+  { code: 'ha', name: 'Hausa' }, { code: 'he', name: 'Hebrew' },
+  { code: 'hi', name: 'Hindi' }, { code: 'hu', name: 'Hungarian' },
+  { code: 'is', name: 'Icelandic' }, { code: 'id', name: 'Indonesian' },
+  { code: 'ga', name: 'Irish' }, { code: 'it', name: 'Italian' },
+  { code: 'ja', name: 'Japanese' }, { code: 'jv', name: 'Javanese' },
+  { code: 'kn', name: 'Kannada' }, { code: 'kk', name: 'Kazakh' },
+  { code: 'ky', name: 'Kirghiz' }, { code: 'ko', name: 'Korean' },
+  { code: 'lv', name: 'Latvian' }, { code: 'ln', name: 'Lingala' },
+  { code: 'lt', name: 'Lithuanian' }, { code: 'lb', name: 'Luxembourgish' },
   { code: 'mk', name: 'Macedonian' }, { code: 'ms', name: 'Malay' },
   { code: 'ml', name: 'Malayalam' }, { code: 'mr', name: 'Marathi' },
   { code: 'ne', name: 'Nepali' }, { code: 'no', name: 'Norwegian' },
-  { code: 'fa', name: 'Persian' }, { code: 'pl', name: 'Polish' },
-  { code: 'pt', name: 'Portuguese' }, { code: 'pa', name: 'Punjabi' },
-  { code: 'ro', name: 'Romanian' }, { code: 'ru', name: 'Russian' },
-  { code: 'sr', name: 'Serbian' }, { code: 'sk', name: 'Slovak' },
+  { code: 'ps', name: 'Pashto' }, { code: 'fa', name: 'Persian' },
+  { code: 'pl', name: 'Polish' }, { code: 'pt', name: 'Portuguese' },
+  { code: 'pa', name: 'Punjabi' }, { code: 'ro', name: 'Romanian' },
+  { code: 'ru', name: 'Russian' }, { code: 'sr', name: 'Serbian' },
+  { code: 'sd', name: 'Sindhi' }, { code: 'sk', name: 'Slovak' },
+  { code: 'sl', name: 'Slovenian' }, { code: 'so', name: 'Somali' },
+  { code: 'es', name: 'Spanish' }, { code: 'sw', name: 'Swahili' },
+  { code: 'sv', name: 'Swedish' }, { code: 'ta', name: 'Tamil' },
+  { code: 'te', name: 'Telugu' }, { code: 'th', name: 'Thai' },
+  { code: 'tr', name: 'Turkish' }, { code: 'uk', name: 'Ukrainian' },
+  { code: 'ur', name: 'Urdu' }, { code: 'vi', name: 'Vietnamese' },
+  { code: 'cy', name: 'Welsh' },
+];
+
+/**
+ * TTS languages — Eleven v3 supports 70+ languages for voice synthesis.
+ * Used for "Translate To" selector. Only languages TTS can actually speak.
+ * Source: https://elevenlabs.io/docs/developer-guides/models
+ */
+const TTS_LANGUAGES = [
+  { code: 'af', name: 'Afrikaans' }, { code: 'ar', name: 'Arabic' },
+  { code: 'hy', name: 'Armenian' }, { code: 'as', name: 'Assamese' },
+  { code: 'az', name: 'Azerbaijani' }, { code: 'be', name: 'Belarusian' },
+  { code: 'bn', name: 'Bengali' }, { code: 'bs', name: 'Bosnian' },
+  { code: 'bg', name: 'Bulgarian' }, { code: 'ca', name: 'Catalan' },
+  { code: 'ceb', name: 'Cebuano' }, { code: 'zh', name: 'Chinese (Mandarin)' },
+  { code: 'hr', name: 'Croatian' }, { code: 'cs', name: 'Czech' },
+  { code: 'da', name: 'Danish' }, { code: 'nl', name: 'Dutch' },
+  { code: 'en', name: 'English' }, { code: 'et', name: 'Estonian' },
+  { code: 'fil', name: 'Filipino' }, { code: 'fi', name: 'Finnish' },
+  { code: 'fr', name: 'French' }, { code: 'gl', name: 'Galician' },
+  { code: 'ka', name: 'Georgian' }, { code: 'de', name: 'German' },
+  { code: 'el', name: 'Greek' }, { code: 'gu', name: 'Gujarati' },
+  { code: 'ha', name: 'Hausa' }, { code: 'he', name: 'Hebrew' },
+  { code: 'hi', name: 'Hindi' }, { code: 'hu', name: 'Hungarian' },
+  { code: 'is', name: 'Icelandic' }, { code: 'id', name: 'Indonesian' },
+  { code: 'ga', name: 'Irish' }, { code: 'it', name: 'Italian' },
+  { code: 'ja', name: 'Japanese' }, { code: 'jv', name: 'Javanese' },
+  { code: 'kn', name: 'Kannada' }, { code: 'kk', name: 'Kazakh' },
+  { code: 'ky', name: 'Kirghiz' }, { code: 'ko', name: 'Korean' },
+  { code: 'lv', name: 'Latvian' }, { code: 'ln', name: 'Lingala' },
+  { code: 'lt', name: 'Lithuanian' }, { code: 'lb', name: 'Luxembourgish' },
+  { code: 'mk', name: 'Macedonian' }, { code: 'ms', name: 'Malay' },
+  { code: 'ml', name: 'Malayalam' }, { code: 'mr', name: 'Marathi' },
+  { code: 'ne', name: 'Nepali' }, { code: 'no', name: 'Norwegian' },
+  { code: 'ps', name: 'Pashto' }, { code: 'fa', name: 'Persian' },
+  { code: 'pl', name: 'Polish' }, { code: 'pt', name: 'Portuguese' },
+  { code: 'pa', name: 'Punjabi' }, { code: 'ro', name: 'Romanian' },
+  { code: 'ru', name: 'Russian' }, { code: 'sr', name: 'Serbian' },
+  { code: 'sd', name: 'Sindhi' }, { code: 'sk', name: 'Slovak' },
   { code: 'sl', name: 'Slovenian' }, { code: 'so', name: 'Somali' },
   { code: 'es', name: 'Spanish' }, { code: 'sw', name: 'Swahili' },
   { code: 'sv', name: 'Swedish' }, { code: 'ta', name: 'Tamil' },
@@ -742,7 +797,7 @@ function SettingsView({ onBack }: { onBack: () => void }) {
               await vb.setSetting('sourceLanguage', val);
             }}>
               <option value="auto">Auto-detect</option>
-              {LANG_OPTIONS.map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
+              {STT_LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
             </select>
           </div>
           <div class="label" style={{ color: 'var(--text-disabled)', paddingBottom: 8 }}>→</div>
@@ -753,7 +808,7 @@ function SettingsView({ onBack }: { onBack: () => void }) {
               setTargetLang(val);
               await vb.setSetting('targetLanguage', val);
             }}>
-              {LANG_OPTIONS.filter(l => l.code !== sourceLang).map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
+              {TTS_LANGUAGES.filter(l => l.code !== sourceLang).map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
             </select>
           </div>
         </div>
@@ -1057,7 +1112,7 @@ function App() {
               await vb.setSetting('sourceLanguage', val);
             }}>
             <option value="auto">Auto-detect</option>
-            {LANG_OPTIONS.map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
+            {STT_LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
           </select>
         </div>
         <div class="label" style={{ color: 'var(--text-disabled)', paddingTop: 18 }}>→</div>
@@ -1070,7 +1125,7 @@ function App() {
               dispatch({ type: 'SET_LANGUAGES', source: state.sourceLanguage, target: val });
               await vb.setSetting('targetLanguage', val);
             }}>
-            {LANG_OPTIONS.filter(l => l.code !== state.sourceLanguage).map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
+            {TTS_LANGUAGES.filter(l => l.code !== state.sourceLanguage).map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
           </select>
         </div>
       </div>
@@ -1106,7 +1161,7 @@ function App() {
                 const result = await vb.installDriver();
                 if (result.success) {
                   setInstallPercent(100);
-                  setInstallMessage('Done!');
+                  setInstallMessage(result.requiresReboot ? 'Installed! Restart your computer to activate the virtual mic.' : 'Done!');
                   dispatch({ type: 'SET_DRIVER', installed: true });
                 } else {
                   setInstalling(false);
