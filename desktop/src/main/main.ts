@@ -33,33 +33,40 @@ let panicStop: PanicStop;
 // ── Window Creation ─────────────────────────────────────────
 
 function createMainWindow(): BrowserWindow {
+  const isDev = process.env['NODE_ENV'] === 'development';
+
   const win = new BrowserWindow({
-    width: 360,
-    height: 480,
+    width: isDev ? 800 : 360,
+    height: isDev ? 600 : 480,
     show: false,
-    frame: false,
-    resizable: false,
-    skipTaskbar: true,
+    frame: isDev,
+    resizable: isDev,
+    skipTaskbar: !isDev,
     transparent: false,
     backgroundColor: '#000000',
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      preload: join(__dirname, '..', 'preload', 'preload.js'),
+      preload: join(__dirname, '..', 'preload', 'preload.cjs'),
+      sandbox: false,
     },
   });
 
   // Load renderer
   if (process.env['NODE_ENV'] === 'development') {
-    win.loadURL('http://localhost:5173');
+    void win.loadURL('http://localhost:5173/src/renderer/index.html');
+    // Open DevTools in dev mode
+    win.webContents.openDevTools({ mode: 'detach' });
   } else {
-    win.loadFile(join(__dirname, '..', 'renderer', 'index.html'));
+    void win.loadFile(join(__dirname, '..', 'renderer', 'src', 'renderer', 'index.html'));
   }
 
-  // Hide on blur (click outside)
-  win.on('blur', () => {
-    win.hide();
-  });
+  // Hide on blur (click outside) — disabled in dev for DevTools usability
+  if (process.env['NODE_ENV'] !== 'development') {
+    win.on('blur', () => {
+      win.hide();
+    });
+  }
 
   win.on('closed', () => {
     mainWindow = null;

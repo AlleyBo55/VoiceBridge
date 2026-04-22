@@ -3,13 +3,13 @@
   "version": "1.0.0",
   "type": "module",
   "description": "VoiceBridge Desktop — Real-time voice translation with OS-level virtual microphone",
-  "main": "dist/main/main.js",
+  "main": "dist/main/main.cjs",
   "scripts": {
-    "dev": "vite build --watch",
+    "dev": "node scripts/dev.mjs",
     "build": "tsc --noEmit && vite build",
     "build:main": "tsc -p tsconfig.main.json",
     "build:renderer": "vite build",
-    "start": "electron dist/main/main.js",
+    "start": "electron dist/main/main.cjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
