@@ -661,11 +661,16 @@ function SettingsView({ onBack }: { onBack: () => void }) {
       const devices = await vb.listDevices();
       setMicDevices(devices.map(d => ({ id: d.id, name: d.name })));
       const savedMic = await vb.getSetting('selectedMicDeviceId') as string;
-      if (savedMic) setSelectedMic(savedMic);
-      else if (devices.length > 0) {
-        // Default: pick first non-BlackHole device
+      const savedDevice = devices.find(d => d.id === savedMic);
+      const isVirtualSaved = savedDevice?.name.toLowerCase().includes('blackhole') || savedDevice?.name.toLowerCase().includes('cable');
+      if (savedMic && !isVirtualSaved) {
+        setSelectedMic(savedMic);
+      } else {
+        // Pick first non-virtual device
         const real = devices.find(d => !d.name.toLowerCase().includes('blackhole') && !d.name.toLowerCase().includes('cable'));
-        setSelectedMic(real?.id ?? devices[0]?.id ?? '');
+        const picked = real?.id ?? devices[0]?.id ?? '';
+        setSelectedMic(picked);
+        if (picked) await vb.setSetting('selectedMicDeviceId', picked);
       }
     } catch {}
     const vad = await vb.getSetting('vadSensitivity') as string;
@@ -873,9 +878,10 @@ function SettingsView({ onBack }: { onBack: () => void }) {
           await vb.selectDevice(id);
           await vb.setSetting('selectedMicDeviceId', id);
         }}>
-          {micDevices.map(d => (
-            <option key={d.id} value={d.id}>{d.name}{d.name.toLowerCase().includes('blackhole') ? ' ⚠️ (virtual output)' : ''}</option>
-          ))}
+          {micDevices.map(d => {
+            const isVirtual = d.name.toLowerCase().includes('blackhole') || d.name.toLowerCase().includes('cable');
+            return <option key={d.id} value={d.id} disabled={isVirtual}>{d.name}{isVirtual ? ' ⚠️ (DO NOT SELECT — virtual output)' : ''}</option>;
+          })}
         </select>
       </div>
 

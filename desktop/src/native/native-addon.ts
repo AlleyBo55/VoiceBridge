@@ -40,6 +40,8 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
   #capturing = false;
 
   onAudioChunk: ((pcm: Buffer, sequenceId: number) => void) | null = null;
+  
+  
 
   enumerateInputDevices(): AudioDeviceInfo[] {
     try {
@@ -54,7 +56,7 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
             const match = line.match(/\[(\d+)]\s+(.+)/);
             if (match) {
               devices.push({
-                id: match[1] ?? String(idx),
+                id: (match[2] ?? '').trim(),  // Use NAME as ID (indices change when devices plug/unplug)
                 name: (match[2] ?? '').trim(),
                 sampleRate: 48000,
                 channels: 1,
@@ -124,20 +126,46 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
 
   /** Write PCM audio to the virtual mic (BlackHole / PulseAudio sink). */
   #outputChunkCount = 0;
+  #outputDraining = false;
+  #outputQueue: Buffer[] = [];
+
   writeVirtualMic(pcm: Buffer): void {
-    if (!this.#outputProcess || this.#outputProcess.killed) {
+    if (!this.#outputProcess || this.#outputProcess.killed || !this.#outputProcess.stdin?.writable) {
       this.#startOutputProcess();
     }
     this.#outputChunkCount++;
-    if (this.#outputChunkCount <= 3 || this.#outputChunkCount % 50 === 0) {
+    if (this.#outputChunkCount <= 5 || this.#outputChunkCount % 20 === 0) {
       console.log(`[Audio] Writing ${pcm.length} bytes to virtual mic (chunk #${this.#outputChunkCount})`);
     }
+
+    // If draining, queue the data
+    if (this.#outputDraining) {
+      this.#outputQueue.push(pcm);
+      return;
+    }
+
     try {
-      this.#outputProcess?.stdin?.write(pcm);
-    } catch {
-      // Pipe broken — restart
+      const ok = this.#outputProcess?.stdin?.write(pcm);
+      if (!ok) {
+        this.#outputDraining = true;
+        this.#outputProcess?.stdin?.once('drain', () => {
+          this.#outputDraining = false;
+          // Flush queued data
+          while (this.#outputQueue.length > 0 && !this.#outputDraining) {
+            const queued = this.#outputQueue.shift()!;
+            const ok2 = this.#outputProcess?.stdin?.write(queued);
+            if (!ok2) {
+              this.#outputDraining = true;
+              this.#outputProcess?.stdin?.once('drain', () => { this.#outputDraining = false; });
+              break;
+            }
+          }
+        });
+      }
+    } catch(_e) {
+      console.error('[Audio] Write failed, restarting output process');
       this.#startOutputProcess();
-      try { this.#outputProcess?.stdin?.write(pcm); } catch {}
+      try { this.#outputProcess?.stdin?.write(pcm); } catch(_e2) {}
     }
   }
 
@@ -174,8 +202,9 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
 
   #buildCaptureArgs(deviceId: string, config: CaptureConfig): string[] {
     if (process.platform === 'darwin') {
-      // avfoundation: ":audioDeviceIndex" for audio-only
-      const devIdx = deviceId === 'default' ? '0' : deviceId;
+      // Resolve device name to current avfoundation index (indices change when devices plug/unplug)
+      const devIdx = this.#resolveDeviceIndex(deviceId);
+      console.log(`[Audio] Resolved mic "${deviceId}" → avfoundation index :${devIdx}`);
       return [
         '-f', 'avfoundation', '-i', `:${devIdx}`,
         '-ar', String(config.sampleRate),
@@ -219,7 +248,7 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
         return;
       }
       args = [
-        '-f', 's16le', '-ar', '48000', '-ac', '1', '-i', 'pipe:0',
+        '-y', '-f', 's16le', '-ar', '48000', '-ac', '1', '-i', 'pipe:0',
         '-f', 'audiotoolbox', '-audio_device_index', String(bhIdx),
         '',
       ];
@@ -237,16 +266,63 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
 
     console.log('[Audio] Starting output:', 'ffmpeg', args.join(' '));
     this.#outputProcess = spawn('ffmpeg', args, {
-      stdio: ['pipe', 'ignore', 'ignore'],
+      stdio: ['pipe', 'ignore', 'pipe'],
+    });
+
+    // Prevent EPIPE crash — handle stdin errors gracefully
+    this.#outputProcess.stdin?.on('error', (err) => {
+      console.error('[Audio] Output stdin error:', err.message);
+    });
+
+    // Log stderr for debugging ffmpeg issues
+    this.#outputProcess.stderr?.on('data', (data: Buffer) => {
+      const msg = data.toString().trim();
+      if (msg && !msg.includes('size=')) { // Filter out progress lines
+        console.log('[Audio] ffmpeg output:', msg.slice(0, 200));
+      }
     });
 
     this.#outputProcess.on('error', (err) => {
-      console.error('[Audio] Output error:', err.message);
+      console.error('[Audio] Output process error:', err.message);
     });
 
     this.#outputProcess.on('close', (code) => {
       console.log('[Audio] Output process exited:', code);
     });
+  }
+
+  /** Resolve a device name (or index string) to the current avfoundation audio index */
+  #resolveDeviceIndex(deviceId: string): string {
+    // If it's already a pure number, use it directly (legacy)
+    if (/^\d+$/.test(deviceId)) return deviceId;
+
+    // If it's 'default', find the first non-virtual device
+    if (deviceId === 'default') {
+      const dev = this.getDefaultInputDevice();
+      if (dev) return this.#resolveDeviceIndex(dev.id);
+      return '0';
+    }
+
+    // Search by name in the current device list
+    try {
+      const out = execSync('ffmpeg -f avfoundation -list_devices true -i "" 2>&1 || true', { encoding: 'utf8', timeout: 5000 });
+      let inAudio = false;
+      for (const line of out.split('\n')) {
+        if (line.includes('AVFoundation audio devices')) { inAudio = true; continue; }
+        if (inAudio) {
+          const match = line.match(/\[(\d+)]\s+(.+)/);
+          if (match) {
+            const name = (match[2] ?? '').trim();
+            if (name === deviceId || name.toLowerCase().includes(deviceId.toLowerCase())) {
+              return match[1] ?? '0';
+            }
+          }
+        }
+      }
+    } catch {}
+
+    // Fallback: try as-is
+    return '0';
   }
 
   #findBlackHoleIndex(): number | null {
@@ -276,6 +352,9 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
       this.#outputProcess.kill('SIGTERM');
       this.#outputProcess = null;
     }
+    this.#outputChunkCount = 0;
+    this.#outputDraining = false;
+    this.#outputQueue = [];
   }
 }
 

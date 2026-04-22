@@ -102,6 +102,10 @@ export class DesktopPipeline {
     this.#targetLanguage = params.targetLanguage;
     this.#lastPartialText = '';
     this.#processedTextLength = 0;
+    this.#lastPartialTimestamp = 0;
+    this.#ttsTextQueue = '';
+    if (this.#partialStableTimer) { clearTimeout(this.#partialStableTimer); this.#partialStableTimer = null; }
+    if (this.#ttsFlushTimer) { clearTimeout(this.#ttsFlushTimer); this.#ttsFlushTimer = null; }
 
     // Load settings
     this.#apiKey = await this.#settings.get('elevenLabsApiKey');
@@ -188,9 +192,13 @@ export class DesktopPipeline {
 
     this.#debugLog.log('info', 'pipeline', `Session stopping: ${reason}`);
 
-    // Stop audio
+    // Stop audio and kill ffmpeg output process
     this.#audioRouter.transitionRouting({ type: 'session_stop' });
     this.#audioRouter.stop();
+    // Kill the ffmpeg output process so next session starts fresh
+    if ('destroy' in this.#nativeAddon) {
+      (this.#nativeAddon as { destroy(): void }).destroy();
+    }
 
     // Disconnect STT
     if (this.#sttWs) {
@@ -279,7 +287,9 @@ export class DesktopPipeline {
 
   // Track latest partial for speech-end trigger
   #lastPartialText = '';
-  #processedTextLength = 0; // How many chars of the accumulated STT text we've already translated
+  #processedTextLength = 0;
+  #partialStableTimer: ReturnType<typeof setTimeout> | null = null;
+  #lastPartialTimestamp = 0; // How many chars of the accumulated STT text we've already translated
 
   #handleSTTMessage(data: string): void {
     try {
@@ -289,6 +299,16 @@ export class DesktopPipeline {
 
       if (msgType === 'partial_transcript' && text) {
         this.#lastPartialText = text;
+        this.#lastPartialTimestamp = Date.now();
+
+        // When partial text stabilizes (no change for 1.5s) AND has new content, translate
+        if (this.#partialStableTimer) clearTimeout(this.#partialStableTimer);
+        this.#partialStableTimer = setTimeout(() => {
+          if (this.#sessionActive && this.#lastPartialText.trim().length > this.#processedTextLength) {
+            this.#debugLog.log('info', 'pipeline', `STT stable 0.8s — translating`);
+            this.#triggerTranslation();
+          }
+        }, 1200);
       }
 
       if (msgType === 'committed_transcript' || msgType === 'committed_transcript_with_timestamps') {
@@ -318,41 +338,45 @@ export class DesktopPipeline {
     if (!this.#sessionActive) return;
     this.#currentSequenceId++;
     this.#totalUtterances++;
-
     this.#latencyMonitor.markCaptureEnd(this.#currentSequenceId);
     this.#emitStage(this.#currentSequenceId, 'CAPTURED');
+    await this.#triggerTranslation();
+    this.#debugLog.log('info', 'pipeline', `Utterance ${this.#currentSequenceId} captured`);
+  }
 
-    // Extract only the NEW text since last translation
+  /** Extract new text from STT partials and send to translation + TTS */
+  async #triggerTranslation(): Promise<void> {
     const fullText = this.#lastPartialText.trim();
     if (!fullText || fullText.length <= this.#processedTextLength) {
-      // If STT stopped sending partials, reset the offset so next partial works
       if (!fullText && this.#processedTextLength > 0) {
-        this.#debugLog.log('info', 'pipeline', `Resetting STT offset (was ${this.#processedTextLength}) — STT may have reset`);
         this.#processedTextLength = 0;
       }
       return;
     }
 
     const newText = fullText.slice(this.#processedTextLength).trim();
-    if (!newText) { return; }
+    if (!newText) return;
 
     this.#processedTextLength = fullText.length;
-    this.#lastPartialText = '';
     this.#debugLog.log('info', 'pipeline', `STT (new): "${newText.slice(0, 80)}"`);
     this.#latencyMonitor.markSTTEnd(this.#currentSequenceId);
     this.#emitStage(this.#currentSequenceId, 'TRANSCRIBED');
 
-    // Reconnect TTS if closed (it closes after isFinal)
+    // Send to translation → TTS (reconnect TTS if needed)
     if (!this.#ttsWs || this.#ttsWs.readyState !== WebSocket.OPEN) {
-      this.#debugLog.log('info', 'connection', 'Reconnecting TTS...');
       await this.#connectTTS();
     }
-
     this.#translateAndSpeak(newText, this.#currentSequenceId);
 
-    // Note: commit not supported on this endpoint — partials are used directly
-
-    this.#debugLog.log('info', 'pipeline', `Utterance ${this.#currentSequenceId} captured — commit sent`);
+    // Reset STT — its accumulation buffer stops producing new partials once text stabilizes
+    this.#processedTextLength = 0;
+    this.#lastPartialText = '';
+    if (this.#sttWs) {
+      try { this.#sttWs.close(); } catch(_e5) {}
+      this.#sttWs = null;
+    }
+    if (this.#sttHeartbeat) { clearInterval(this.#sttHeartbeat); this.#sttHeartbeat = null; }
+    await this.#connectSTT();
   }
 
   // ── Translation ───────────────────────────────────────────
@@ -458,8 +482,9 @@ export class DesktopPipeline {
 
       if (fullTranslation) {
         this.#debugLog.log('info', 'pipeline', `Translation: "${fullTranslation.slice(0, 80)}"`);
-        // Flush TTS to generate remaining audio
-        this.#flushTTS();
+        // Schedule a delayed flush — batches multiple translations into one TTS generation
+        // This keeps the TTS connection alive longer and reduces reconnect gaps
+        this.#scheduleTTSFlush();
       }
 
     } catch (err) {
@@ -500,6 +525,14 @@ export class DesktopPipeline {
         this.#emitConnectionState('tts', { status: 'connected' });
         this.#debugLog.log('info', 'connection', 'TTS connected');
 
+        // Flush any queued text from during reconnection
+        if (this.#ttsTextQueue.length > 0) {
+          this.#debugLog.log('info', 'pipeline', `Flushing ${this.#ttsTextQueue.length} queued chars to TTS`);
+          ws.send(JSON.stringify({ text: this.#ttsTextQueue }));
+          ws.send(JSON.stringify({ text: '', flush: true }));
+          this.#ttsTextQueue = '';
+        }
+
         // Heartbeat
         this.#ttsHeartbeat = setInterval(() => {
           if (ws.readyState === WebSocket.OPEN) {
@@ -524,19 +557,32 @@ export class DesktopPipeline {
         if (this.#ttsHeartbeat) { clearInterval(this.#ttsHeartbeat); this.#ttsHeartbeat = null; }
         if (this.#sessionActive) {
           this.#emitConnectionState('tts', { status: 'disconnected' });
+          // Don't auto-reconnect here — reconnect on demand when we have text to send
         }
       });
     });
   }
 
   #ttsSentChars = 0;
+  #ttsTextQueue = '';
+  #ttsFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Schedule a TTS flush after a short delay — batches multiple translations */
+  #scheduleTTSFlush(): void {
+    if (this.#ttsFlushTimer) clearTimeout(this.#ttsFlushTimer);
+    this.#ttsFlushTimer = setTimeout(() => {
+      this.#ttsFlushTimer = null;
+      this.#flushTTS();
+    }, 300); // Wait 300ms for more text before flushing
+  }
 
   #sendTextToTTS(text: string): void {
     if (this.#ttsWs?.readyState === WebSocket.OPEN) {
       this.#ttsSentChars += text.length;
       this.#ttsWs.send(JSON.stringify({ text }));
     } else {
-      this.#debugLog.log('warn', 'pipeline', `TTS WebSocket not open (state=${this.#ttsWs?.readyState}), dropping text`);
+      // Queue text while TTS is reconnecting
+      this.#ttsTextQueue += text;
     }
   }
 
@@ -581,10 +627,7 @@ export class DesktopPipeline {
         this.#emitStage(this.#currentSequenceId, 'PLAYED');
         this.#debugLog.log('info', 'pipeline', `Utterance ${this.#currentSequenceId} played (${this.#ttsMessageCount} TTS messages)`);
         this.#ttsMessageCount = 0;
-
-        // Pre-connect next TTS session immediately so it's ready for the next utterance
-        this.#debugLog.log('info', 'connection', 'Pre-connecting TTS for next utterance...');
-        this.#connectTTS().catch((_e3) => {});
+        // TTS stream ended — will reconnect on demand for next utterance
       }
 
       return;

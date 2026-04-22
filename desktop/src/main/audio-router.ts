@@ -295,12 +295,18 @@ export class AudioRouter {
     // ALWAYS send raw audio to STT (before noise gate)
     this.onRawAudioChunk?.(samples);
 
-    // Calibrate reference level during first 5 seconds
+    // Auto-calibrate noise gate threshold from first 3 seconds of audio
     if (Date.now() - this.#calibrationStartedAt < CALIBRATION_DURATION_MS) {
       const rms = computeRmsDb(samples);
-      if (rms > -60) this.#calibrationSamples.push(rms);
+      if (rms > -80) this.#calibrationSamples.push(rms);
       if (this.#calibrationSamples.length > 0) {
         this.#referenceLevel = this.#calibrationSamples.reduce((a, b) => a + b, 0) / this.#calibrationSamples.length;
+        // Set noise gate 10dB above the noise floor — speech is typically 10-20dB louder than ambient
+        const autoThreshold = this.#referenceLevel + 10;
+        if (this.#calibrationSamples.length === 12) { // ~3 seconds of 250ms chunks
+          console.log(`[Audio] Auto-calibrated noise floor: ${this.#referenceLevel.toFixed(1)}dB → threshold: ${autoThreshold.toFixed(1)}dB`);
+          this.#config.noiseGateThresholdDb = autoThreshold;
+        }
       }
     }
 
