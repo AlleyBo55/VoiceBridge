@@ -110,7 +110,12 @@ function SessionToggle({ active, onToggle, disabled }: { active: boolean; onTogg
       aria-label={active ? 'Stop translation' : 'Start translation'}
       role="switch"
       aria-checked={active}
-      style={{ opacity: disabled ? 0.4 : 1, cursor: disabled ? 'not-allowed' : 'pointer' }}
+      style={{
+        opacity: disabled ? 0.4 : 1,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        width: 48, height: 28, minWidth: 48, minHeight: 28, flexShrink: 0,
+        padding: 0, border: 'none',
+      }}
     >
       <div class="toggle-thumb" />
     </button>
@@ -946,12 +951,13 @@ function App() {
       overflow: 'auto',
     }}>
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', minHeight: 32 }}>
         <div style={{
-          fontFamily: 'var(--font-display)',
-          fontSize: 'var(--heading)',
+          fontFamily: "'Doto', 'Space Mono', monospace",
+          fontSize: 24,
           color: 'var(--text-display)',
-          letterSpacing: 'var(--ls-heading)',
+          letterSpacing: '-0.01em',
+          lineHeight: 1,
         }}>
           VOICEBRIDGE
         </div>
