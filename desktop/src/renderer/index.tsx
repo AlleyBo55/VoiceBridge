@@ -1161,7 +1161,7 @@ function App() {
                 const result = await vb.installDriver();
                 if (result.success) {
                   setInstallPercent(100);
-                  setInstallMessage(result.requiresReboot ? 'Installed! Restart your computer to activate the virtual mic.' : 'Done!');
+                  setInstallMessage(result.requiresReboot ? 'Installed! Restart your computer, then select "BlackHole 2ch" as mic.' : 'Done! Select "VoiceBridge Mic" in your meeting app.');
                   dispatch({ type: 'SET_DRIVER', installed: true });
                 } else {
                   setInstalling(false);
@@ -1202,9 +1202,14 @@ function App() {
         </div>
       )}
       {state.driverInstalled && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)' }}>
-          <span class="mono status-green" style={{ fontSize: 'var(--caption)' }}>●</span>
-          <span class="label">VIRTUAL MIC READY</span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2xs)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)' }}>
+            <span class="mono status-green" style={{ fontSize: 'var(--caption)' }}>●</span>
+            <span class="label">VIRTUAL MIC READY</span>
+          </div>
+          <div class="mono" style={{ fontSize: '10px', color: 'var(--text-disabled)', paddingLeft: 16 }}>
+            Select "BlackHole 2ch" (macOS) / "VoiceBridge Mic" (Linux) / "CABLE Output" (Windows) in your meeting app
+          </div>
         </div>
       )}
 

@@ -278,7 +278,7 @@ export class DriverInstaller {
           const check = execSync('brew list --cask blackhole-2ch 2>/dev/null', { encoding: 'utf8', timeout: 3000 });
           if (check.trim().length > 0) {
             clearInterval(pollTimer);
-            p(100, 'Installed! Restart your computer to activate.');
+            p(100, 'Installed! Restart your computer. Select "BlackHole 2ch" as mic in meeting apps.');
             resolve({
               success: true,
               requiresReboot: true,
