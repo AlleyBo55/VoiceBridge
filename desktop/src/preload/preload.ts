@@ -40,17 +40,33 @@ const api = {
   installDriver: (): Promise<DriverInstallResult> =>
     ipcRenderer.invoke('driver:install'),
 
+  // ── Key Validation ──────────────────────────────────────
+  validateElevenLabsKey: (key: string): Promise<{ valid: boolean; error?: string }> =>
+    ipcRenderer.invoke('validate:elevenlabs', { key }),
+  validateLLMKey: (provider: string, key: string): Promise<{ valid: boolean; error?: string }> =>
+    ipcRenderer.invoke('validate:llm', { provider, key }),
+  listModels: (provider: string, key: string): Promise<Array<{ id: string; name: string }>> =>
+    ipcRenderer.invoke('models:list', { provider, key }),
+
   // ── Voice Profile ───────────────────────────────────────
   startRecording: (): Promise<void> =>
     ipcRenderer.invoke('voice:start-recording'),
-  stopRecording: (): Promise<Blob> =>
-    ipcRenderer.invoke('voice:stop-recording'),
+  stopRecording: (audioBase64: string): Promise<{ durationMs: number }> =>
+    ipcRenderer.invoke('voice:stop-recording', { audioBase64 }),
   uploadVoice: (): Promise<string> =>
     ipcRenderer.invoke('voice:upload'),
   deleteVoice: (voiceId: string): Promise<void> =>
     ipcRenderer.invoke('voice:delete', { voiceId }),
   previewVoice: (voiceId: string, text: string, language: string): Promise<ArrayBuffer> =>
     ipcRenderer.invoke('voice:preview', { voiceId, text, language }),
+  getVoiceProfileId: (): Promise<string> =>
+    ipcRenderer.invoke('settings:get', { key: 'voiceProfileId' }),
+  listVoices: (): Promise<Array<{ voiceId: string; name: string; createdAt: number }>> =>
+    ipcRenderer.invoke('voice:list'),
+  setActiveVoice: (voiceId: string): Promise<void> =>
+    ipcRenderer.invoke('voice:set-active', { voiceId }),
+  getActiveVoice: (): Promise<string> =>
+    ipcRenderer.invoke('voice:get-active'),
 
   // ── Languages ───────────────────────────────────────────
   listLanguages: (): Promise<Language[]> =>

@@ -149,10 +149,18 @@ On first launch, VoiceBridge asks for your API keys:
 
 Keys are encrypted with AES-GCM-256 and stored locally. Never sent anywhere except the API providers. You can change them anytime in Settings.
 
-### 4. Use it
+### 4. Install the virtual mic driver
 
-1. VoiceBridge installs the virtual mic driver (one-time, requires admin)
-2. Open any meeting app → select "VoiceBridge Mic" as your microphone
+Click "Install Driver" in the main window. This is a one-time setup:
+- **macOS**: Installs BlackHole 2ch via Homebrew (~30 seconds)
+- **Linux**: Creates a PulseAudio/PipeWire virtual sink (instant)
+- **Windows**: Shows instructions to download VB-CABLE
+
+If it fails, the app shows the exact error and how to fix it.
+
+### 5. Use it
+
+1. Open any meeting app → select "BlackHole 2ch" (macOS) or "VoiceBridge Mic" (Linux) as your microphone
 3. Toggle translation on in the VoiceBridge tray app
 4. Speak — other participants hear your translated voice
 

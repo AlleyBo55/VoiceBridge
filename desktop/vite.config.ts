@@ -6,18 +6,18 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, __dirname, 'VITE_');
 
   return {
+    root: resolve(__dirname, 'src/renderer'),
     plugins: [preact()],
     build: {
-      outDir: 'dist/renderer',
+      outDir: resolve(__dirname, 'dist/renderer'),
       emptyOutDir: true,
-      rollupOptions: {
-        input: {
-          main: resolve(__dirname, 'src/renderer/index.html'),
-        },
-      },
       target: 'esnext',
       minify: 'esbuild',
       sourcemap: true,
+    },
+    server: {
+      port: 5173,
+      strictPort: true,
     },
     resolve: {
       alias: {
