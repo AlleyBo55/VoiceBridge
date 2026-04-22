@@ -61,7 +61,9 @@ export default defineConfig(({ mode }) => {
       input: {
         'service-worker': resolve(__dirname, 'src/background/service-worker.ts'),
         'offscreen': resolve(__dirname, 'src/offscreen/offscreen.ts'),
+        'offscreen-loader': resolve(__dirname, 'src/offscreen/offscreen-loader.ts'),
         'content-script': resolve(__dirname, 'src/content/content-script.ts'),
+        'content-loader': resolve(__dirname, 'src/content/content-loader.ts'),
         'widget': resolve(__dirname, 'src/content/widget.ts'),
         'popup': resolve(__dirname, 'src/popup/popup.ts'),
         'sidepanel': resolve(__dirname, 'src/sidepanel/sidepanel.ts'),

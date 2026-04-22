@@ -10,7 +10,7 @@ import type { MeetingPlatform, AudioInjectionStrategy } from './types.js';
 const PLATFORM_PATTERNS: Record<Exclude<MeetingPlatform, 'generic' | 'none'>, RegExp> = {
   'google-meet': /^https:\/\/meet\.google\.com\/.+/,
   'zoom': /^https:\/\/[\w.]*zoom\.us\/wc\/.+/,
-  'teams': /^https:\/\/teams\.microsoft\.com\/.+/,
+  'teams': /^https:\/\/(teams\.microsoft\.com|teams\.cloud\.microsoft\.com|teams\.cloud\.microsoft)\/.+/,
   'discord': /^https:\/\/discord\.com\/channels\/.+/,
 };
 

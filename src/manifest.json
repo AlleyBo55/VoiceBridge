@@ -8,6 +8,9 @@
     "https://meet.google.com/*",
     "https://zoom.us/*",
     "https://teams.microsoft.com/*",
+    "https://teams.cloud.microsoft.com/*",
+    "https://teams.cloud.microsoft/*",
+    "https://*.teams.microsoft.com/*",
     "https://discord.com/*",
     "https://api.elevenlabs.io/*",
     "https://api.openai.com/*",
@@ -24,11 +27,21 @@
         "https://meet.google.com/*",
         "https://*.zoom.us/*",
         "https://teams.microsoft.com/*",
+        "https://teams.cloud.microsoft.com/*",
+        "https://teams.cloud.microsoft/*",
+        "https://*.teams.microsoft.com/*",
         "https://discord.com/channels/*"
       ],
-      "js": ["content-script.js"],
+      "js": ["content-loader.js"],
       "css": ["assets/widget.css"],
-      "run_at": "document_start"
+      "run_at": "document_start",
+      "world": "ISOLATED"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["content-script.js", "offscreen.js", "chunks/*"],
+      "matches": ["<all_urls>"]
     }
   ],
   "action": {

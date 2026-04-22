@@ -9,92 +9,168 @@
 </p>
 
 <p align="center">
-  <em>The world's first real-time voice translation engine that runs inside a browser tab.</em>
+  <em>Real-time voice translation with a virtual microphone — works in every meeting app.</em>
 </p>
 
 <p align="center">
-  <a href="#the-demo">Watch Demo</a> · <a href="docs/ARCHITECTURE.md">Architecture</a> · <a href="docs/GETTING-STARTED.md">Get Started</a> · <a href="docs/API-REFERENCE.md">API Reference</a>
+  <a href="#quick-start">Quick Start</a> · <a href="docs/ARCHITECTURE.md">Architecture</a> · <a href="docs/GETTING-STARTED.md">Setup Guide</a> · <a href="docs/API-REFERENCE.md">API Reference</a>
 </p>
 
 ---
 
 ## One More Thing.
 
-You're in a meeting with colleagues in Tokyo, clients in São Paulo, and partners in Berlin. You speak English. They hear you — fluently, naturally, instantly — in Japanese, Portuguese, and German. In *your* voice.
+You're in a meeting with colleagues in Tokyo, clients in São Paulo, and partners in Berlin. You speak Indonesian. They hear you — fluently, naturally, instantly — in Japanese, Portuguese, and German. In *your* voice.
 
 Not a robotic translation. Not a subtitle at the bottom of the screen. Not a five-second delay while some server thinks about it.
 
 **You. Speaking their language. In real time. In your own voice.**
 
-VoiceBridge captures your microphone, transcribes your speech, translates it through an LLM, clones your voice, and injects the translated audio directly into the meeting — all in under two seconds. Other participants don't install anything. They don't configure anything. They just hear you, speaking their language, as if you always could.
+VoiceBridge captures your microphone, transcribes your speech, translates it through an LLM, clones your voice, and outputs the translated audio through a virtual microphone — so any meeting app hears the translated version. Other participants don't install anything. They don't configure anything. They just hear you, speaking their language, as if you always could.
 
-This is not incremental improvement. This is a category of one.
+---
+
+## Why a Desktop App (Not a Chrome Extension)
+
+VoiceBridge started as a Chrome Extension (Phase 1 & 2). We built the full pipeline — STT, translation, TTS, echo cancellation, platform adapters for Meet/Teams/Discord/Zoom. It worked architecturally. But Chrome extensions have a fundamental limitation:
+
+**They can't create a virtual microphone.**
+
+Chrome extensions can only intercept WebRTC connections inside the browser via `replaceTrack()`. This means:
+- Each meeting platform needs a custom adapter that breaks when the platform updates
+- Content scripts can't reliably inject into all URLs (Teams uses `teams.cloud.microsoft`, not `teams.microsoft.com`)
+- The audio bridge between the offscreen document and content script is fragile
+- It only works in Chrome, only in the browser, only on supported platforms
+
+The desktop app solves all of this by operating at the OS audio layer:
+
+```
+Chrome Extension (old):
+  Content Script → getUserMedia intercept → WebRTC replaceTrack → One Meeting App
+
+Desktop App (new):
+  Native Addon → Real Mic → Pipeline → Virtual Mic Driver → ANY App
+```
+
+Install VoiceBridge. Select "VoiceBridge Mic" as your microphone in Teams, Zoom, Meet, Discord, Slack, FaceTime, WhatsApp — anything. Done.
 
 ---
 
 ## The Pipeline
 
 ```
-  ┌─────────┐    ┌───────────┐    ┌─────────────┐    ┌───────────┐    ┌──────────┐
-  │  Your    │───▶│ Transcribe│───▶│  Translate   │───▶│ Your Clone│───▶│  Their   │
-  │  Voice   │    │  (Scribe) │    │   (LLM)      │    │  Voice    │    │  Ears    │
-  │  16kHz   │    │  500ms    │    │   300ms      │    │  300ms    │    │  48kHz   │
-  └─────────┘    └───────────┘    └─────────────┘    └───────────┘    └──────────┘
+  ┌─────────┐    ┌───────────┐    ┌─────────────┐    ┌───────────┐    ┌──────────────┐
+  │  Your    │───▶│ Transcribe│───▶│  Translate   │───▶│ Your Clone│───▶│  Virtual Mic │
+  │  Voice   │    │  (Scribe) │    │   (LLM)      │    │  Voice    │    │  "VoiceBridge│
+  │  16kHz   │    │  150ms    │    │   300ms      │    │  75ms     │    │   Mic"       │
+  └─────────┘    └───────────┘    └─────────────┘    └───────────┘    └──────────────┘
 ```
 
-Five stages. Under two seconds. Zero compromise.
+Five stages. Under 1.5 seconds. Works everywhere.
 
-| Stage | What Happens | Technology | Latency Budget |
-|-------|-------------|-----------|----------------|
-| Capture | Your mic audio is captured on a dedicated audio thread | Web Audio API + AudioWorklet | 250ms |
-| Transcribe | Speech becomes text in real-time via WebSocket | ElevenLabs Scribe STT | 500ms |
-| Translate | Text is translated token-by-token as it streams | OpenAI / Anthropic / OpenRouter | 300ms |
-| Synthesize | Translated text becomes speech in your cloned voice | ElevenLabs Streaming TTS | 300ms |
-| Deliver | Translated audio replaces your mic in the meeting | WebRTC track injection | 100ms |
-
-The pipeline doesn't wait for complete sentences. It streams. Token by token. The moment you finish a thought, the translation is already playing.
+| Stage | What Happens | Technology | Latency |
+|-------|-------------|-----------|---------|
+| Capture | Real mic audio captured via native addon | N-API (napi-rs) + OS audio API | 10ms |
+| Transcribe | Speech becomes text in real-time | ElevenLabs Scribe v2 Realtime | 150ms |
+| Translate | Text translated token-by-token | OpenAI / Anthropic / OpenRouter | 300ms |
+| Synthesize | Translated text becomes speech in your voice | ElevenLabs Flash v2.5 TTS | 75ms |
+| Output | Translated audio written to virtual mic | Native audio driver | 10ms |
 
 ---
 
-## Features That Change Everything
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Electron Desktop App                          │
+│                                                                  │
+│  ┌──────────────────────┐    ┌──────────────────────────────┐   │
+│  │   Main Process        │    │   Renderer Process (Preact)   │   │
+│  │   (Node.js + N-API)   │    │   (Nothing Design System)     │   │
+│  │                        │    │                                │   │
+│  │  Pipeline Orchestrator │◄──►│  Main Window (360×480)        │   │
+│  │  Audio Router          │ IPC│  System Tray                   │   │
+│  │  Native Audio Addon    │    │  Settings View                 │   │
+│  │  Settings Store        │    │  Debug Log View                │   │
+│  │  Driver Installer      │    │                                │   │
+│  └──────────┬─────────────┘    └──────────────────────────────┘   │
+│             │                                                      │
+│             ▼                                                      │
+│  ┌──────────────────────┐                                          │
+│  │   Native Audio Addon  │                                          │
+│  │   (napi-rs / Rust)    │                                          │
+│  │                        │                                          │
+│  │  Real Mic Capture      │                                          │
+│  │  Virtual Mic Write     │                                          │
+│  │  Device Enumeration    │                                          │
+│  │  Resampling            │                                          │
+│  └──────────┬─────────────┘                                          │
+└─────────────┼────────────────────────────────────────────────────────┘
+              │
+              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    OS Audio Layer                                 │
+│                                                                  │
+│  ┌──────────────┐    ┌──────────────────────┐                    │
+│  │ Real Mic      │    │ Virtual Mic Driver    │                    │
+│  │ (hardware)    │    │ "VoiceBridge Mic"     │                    │
+│  └──────────────┘    └──────────┬───────────┘                    │
+│                                  │                                │
+│                                  ▼                                │
+│                    ┌──────────────────────┐                       │
+│                    │ Any Meeting App       │                       │
+│                    │ Teams / Zoom / Meet   │                       │
+│                    │ Discord / Slack / etc  │                       │
+│                    └──────────────────────┘                       │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Virtual Mic Driver (Per OS)
+
+| OS | Driver Technology | Install Method |
+|----|------------------|----------------|
+| macOS | CoreAudio HAL Plugin | `sudo` (copies to `/Library/Audio/Plug-Ins/HAL/`) |
+| Windows | WASAPI Virtual Audio Endpoint | Administrator elevation |
+| Linux | PulseAudio null sink + module-loopback | User-space (no elevation) |
+
+### Module Reuse from Chrome Extension
+
+| Module | Status | Notes |
+|--------|--------|-------|
+| PipelineOrchestrator | Reuse | Replace chrome.* with Electron IPC |
+| STTClient | Reuse | Pure WebSocket — no changes |
+| TranslationEngine | Reuse | Pure HTTP streaming — no changes |
+| TTSClient | Reuse | Pure WebSocket — no changes |
+| EchoCancellationModule | Reuse | Pure state machine — no changes |
+| LatencyMonitor | Reuse | Pure timing logic — no changes |
+| DegradationManager | Reuse | Pure state computation — no changes |
+| CleanupSequencer | Reuse | Pure cleanup orchestration — no changes |
+| AudioCaptureModule | Replace | N-API native capture instead of getUserMedia |
+| AudioOutputModule | Replace | N-API virtual mic write instead of WebRTC |
+| SettingsStore | Replace | Filesystem JSON + Node.js crypto instead of chrome.storage |
+| MessageBus | Replace | Electron IPC instead of chrome.runtime.sendMessage |
+| MeetingDetector | Remove | Not needed — virtual mic works with any app |
+| PlatformAdapters | Remove | Not needed — no per-app injection |
+| AudioBridge | Remove | Not needed — direct N-API calls |
+
+---
+
+## Features
 
 ### Real-Time Voice Translation
-Speak naturally. Don't slow down. Don't pause for the machine. VoiceBridge transcribes, translates, and re-speaks in your cloned voice — all while you're still finishing your sentence. The pipeline streams token-by-token. No buffering. No waiting.
+Speak naturally. Your words are transcribed, translated, and re-spoken in your cloned voice — all while you're still finishing your sentence. Token-by-token streaming. No waiting.
 
 ### Your Voice. Every Language.
-Record 30 seconds. That's all VoiceBridge needs to clone your voice. Now you speak 90+ languages and it still sounds like you. Your colleagues in Tokyo won't know the difference. Your clients in Berlin won't suspect a thing. It's you. In every language.
+Record 30 seconds. VoiceBridge clones your voice. Now you speak 90+ languages and it still sounds like you.
 
-### Works Where You Work
-Google Meet. Zoom. Microsoft Teams. Discord. Any WebRTC app. VoiceBridge injects directly into the meeting's audio stream at the WebRTC layer. No extra software. No virtual audio devices. No "share your screen and play this other app." It just works.
+### Works With Everything
+Teams. Zoom. Google Meet. Discord. Slack. FaceTime. WhatsApp. Any app that uses a microphone. Select "VoiceBridge Mic" and go.
 
 ### Ghost Mode 👻
-Whisper. Mouth words. Barely make a sound. VoiceBridge amplifies your whisper, transcribes it, translates it, and speaks at full volume in the meeting. You're silent. Your voice isn't. The person next to you on the train has no idea you're in a board meeting in three languages.
-
-### Language Roulette 🎰
-One sentence. Ten languages. Your voice. In under 45 seconds. The demo feature that stops rooms cold.
-
-English → Japanese → Spanish → Arabic → French → Mandarin → German → Korean → Portuguese → Hindi.
-
-Back-to-back. No gaps. Your cloned voice in every one. This is the moment judges remember.
-
-### Zero Double-Voice Guarantee
-When translation is active, other participants hear ONLY your translated voice. Never your original language. Never both at once. The audio routing state machine ensures seamless switching between your mic and the TTS output with 50ms transitions.
-
-### Graceful Degradation
-If TTS goes down, you get text translation. If the LLM goes down, you get transcription. If everything goes down, your original mic stays live. VoiceBridge never blocks you from speaking. Ever.
+Whisper into the mic. VoiceBridge amplifies, translates, and speaks at full volume. You're silent. Your voice isn't.
 
 ### Nothing Design Language
-Every pixel earns its place. OLED blacks. Space Mono labels. Mechanical toggles. Segmented progress bars. A floating widget that fades to 30% opacity when you're not looking at it. One red accent dot — the only color — pulsing when you're live. The UI of a precision instrument, not a toy.
-
----
-
-## Try It — Free
-
-VoiceBridge ships with a built-in demo. **5 minutes of voice time, every 24 hours.** Only your speaking time counts — silence, pauses, and listening are free.
-
-No account. No signup. No credit card. Install and go.
-
-Want unlimited? Paste your own API key. Hackathon attendees get the [ElevenLabs Creator plan free](https://hacks.elevenlabs.io/hackathons/4).
+OLED blacks. Space Mono labels. Mechanical toggles. System tray app that stays out of your way.
 
 ---
 
@@ -117,90 +193,33 @@ cp .env.example .env
 Edit `.env`:
 
 ```env
-# ElevenLabs — get your key at https://elevenlabs.io/app/settings/api-keys
 VITE_DEMO_ELEVENLABS_KEY=xi-your-key-here
-
-# LLM for translation — pick one provider
 VITE_DEMO_LLM_PROVIDER=openrouter
 VITE_DEMO_LLM_KEY=sk-or-your-key-here
 VITE_DEMO_OPENROUTER_MODEL=openai/gpt-4o
-
-# Set true to remove voice-time limit
 VITE_DEMO_UNLIMITED=true
 ```
 
-> Hackathon attendees: claim free ElevenLabs Creator plan at [hacks.elevenlabs.io/hackathons/4](https://hacks.elevenlabs.io/hackathons/4)
-
-### 3. Build
+### 3. Build and run
 
 ```bash
 npm run build
+npm start
 ```
 
-### 4. Load in Chrome
+### 4. Use it
 
-1. Go to `chrome://extensions/`
-2. Enable **Developer mode** (top-right toggle)
-3. Click **Load unpacked**
-4. Select the `dist/` folder
-
-### 5. Use it
-
-1. Complete the onboarding (record your voice, pick languages)
-2. Join a meeting (Google Meet, Teams, Discord, Zoom)
-3. Press `Alt+T` or click the VoiceBridge icon
+1. VoiceBridge installs the virtual mic driver (one-time, requires admin)
+2. Open any meeting app → select "VoiceBridge Mic" as your microphone
+3. Toggle translation on in the VoiceBridge tray app
 4. Speak — other participants hear your translated voice
-
-That's it. You're multilingual.
-
-→ [Full setup guide](docs/GETTING-STARTED.md)
-
----
-
-## The Demo
-
-The demo that wins hackathons:
-
-1. **Open a Google Meet call** with a friend
-2. **Toggle VoiceBridge on** (Alt+T)
-3. **Speak English** — your friend hears Japanese (or Spanish, or Arabic, or any of 90+ languages)
-4. **Hit Language Roulette** (Alt+R) — one sentence, ten languages, your voice, 45 seconds
-5. **Enable Ghost Mode** (Alt+G) — whisper, and your friend hears full-volume translated speech
-
-Record it. Post it. Tag `@elevenlabsio` and `@kirodotdev`. Use `#ElevenHacks` and `#CodeWithKiro`.
-
----
-
-## Supported Platforms
-
-| Platform | Injection Strategy | Status |
-|----------|-------------------|--------|
-| Google Meet | `getUserMedia` intercept | ✓ Full support |
-| Microsoft Teams | `RTCPeerConnection.replaceTrack` | ✓ Full support |
-| Discord | `RTCPeerConnection.replaceTrack` | ✓ Full support |
-| Zoom Web | `tabCapture` fallback | ✓ Full support |
-| Any WebRTC app | Generic `replaceTrack` | ✓ Force Enable |
 
 ---
 
 ## 90+ Languages
 
 **Input**: Every language ElevenLabs Scribe supports. Auto-detect is default.
-
-**Output**: Every language ElevenLabs Multilingual v2 supports. Any-to-any. No restrictions.
-
-The extension fetches supported languages dynamically from the API. When ElevenLabs adds a language, VoiceBridge supports it automatically.
-
----
-
-## Documentation
-
-| Document | Description |
-|----------|-------------|
-| [Getting Started](docs/GETTING-STARTED.md) | Installation, setup, first translation |
-| [Architecture](docs/ARCHITECTURE.md) | System design, data flow, state machines, component interfaces |
-| [API Reference](docs/API-REFERENCE.md) | Every module, every interface, every type |
-| [Platform Adapters](docs/PLATFORM-ADAPTERS.md) | How audio injection works on each meeting platform |
+**Output**: Every language ElevenLabs TTS supports. Any-to-any. No restrictions.
 
 ---
 
@@ -208,32 +227,23 @@ The extension fetches supported languages dynamically from the API. When ElevenL
 
 | Layer | Choice | Why |
 |-------|--------|-----|
-| Language | TypeScript (strict mode) | Type safety across 5 Chrome execution contexts |
-| UI | Vanilla DOM + CSS Custom Properties | Zero framework tax. Bundle size matters for Chrome Web Store. |
-| Build | Vite + esbuild | Sub-200ms builds. Tree-shakes aggressively. |
-| STT | ElevenLabs Scribe | Real-time WebSocket streaming, 90+ languages |
-| TTS | ElevenLabs Multilingual v2 | Voice cloning + streaming synthesis |
-| Translation | OpenAI / Anthropic / OpenRouter | Streaming, contextual, 200+ models via OpenRouter |
-| Audio | Web Audio API + AudioWorklet | Dedicated audio thread. Zero main-thread blocking. |
-| Testing | Vitest + fast-check | Property-based correctness proofs |
-| Icons | Lucide (thin) | Monoline. 1.5px stroke. Nothing-compatible. |
-
-No React. No Vue. No Svelte. No Tailwind. No Lodash. No state management library. Just TypeScript and the platform.
+| App Shell | Electron | Cross-platform desktop, native addon support |
+| UI | Preact + CSS Custom Properties | 3KB gzipped, Nothing design system |
+| Native Audio | napi-rs (Rust) | Safe, fast, cross-compiles per OS |
+| STT | ElevenLabs Scribe v2 Realtime | 150ms latency, 90+ languages |
+| TTS | ElevenLabs Flash v2.5 | 75ms latency, voice cloning |
+| Translation | OpenAI / Anthropic / OpenRouter | Streaming, contextual, 200+ models |
+| Testing | Vitest + fast-check | Property-based correctness |
 
 ---
 
 ## Privacy
 
-VoiceBridge is private by design:
-
-- Audio is streamed, never stored — not on disk, not in memory after session ends
-- Transcripts exist only in RAM, cleared the moment you stop
-- API keys encrypted with AES-GCM-256 via Web Crypto API
-- No analytics. No tracking. No telemetry. No third-party scripts.
-- Content scripts never touch your API keys — they stay in the offscreen document
-- Panic button (Ctrl+Shift+X) kills everything instantly — all connections, all audio, all state
-
-→ [Full privacy details](docs/ARCHITECTURE.md#security-model)
+- Audio is streamed, never stored — not on disk, not after session ends
+- API keys encrypted with AES-GCM-256 via Node.js crypto
+- No analytics. No tracking. No telemetry.
+- API keys never leave the main process — renderer has no access
+- Panic button (Ctrl/Cmd+Shift+X) kills everything instantly
 
 ---
 
@@ -241,10 +251,9 @@ VoiceBridge is private by design:
 
 | Shortcut | Action |
 |----------|--------|
-| `Alt+T` | Toggle translation on/off |
-| `Ctrl+Space` | Push-to-translate (hold to speak) |
-| `Ctrl+Shift+X` | Panic stop — kill everything instantly |
-| `Alt+G` | Toggle Ghost Mode |
+| `Ctrl/Cmd+Shift+T` | Toggle translation |
+| `Ctrl/Cmd+Shift+G` | Toggle Ghost Mode |
+| `Ctrl/Cmd+Shift+X` | Panic stop — kill everything |
 
 ---
 
@@ -252,15 +261,21 @@ VoiceBridge is private by design:
 
 ```bash
 npm install          # Install dependencies
-npm run build        # Production build → dist/
-npm run dev          # Watch mode
+npm run build        # Build desktop app
+npm start            # Launch app
 npm run test         # Run tests
 npm run typecheck    # TypeScript strict check
 ```
 
-Load `dist/` as an unpacked extension in `chrome://extensions/` (Developer mode).
+---
 
-→ [Full development guide](docs/GETTING-STARTED.md#development)
+## Project History
+
+| Phase | What | Status |
+|-------|------|--------|
+| Phase 1 | Chrome Extension — core pipeline, UI, onboarding | ✓ Complete |
+| Phase 2 | Pipeline hardening — orchestrator, state machines, degradation | ✓ Complete |
+| Phase 3 | Desktop app rewrite — virtual mic driver, Electron, native audio | 🔄 In Progress |
 
 ---
 
@@ -270,11 +285,50 @@ MIT — use it, fork it, ship it.
 
 ---
 
+## Built With Spec-Driven Development
+
+This entire project was built using [Kiro](https://kiro.dev)'s spec-driven development — you write specifications for what you want to build, and the AI agent helps you implement them systematically. Every feature started as a requirement, became a design, then became code. No guessing. No "let me just hack this together." Every decision is documented, every state machine is specified, every correctness property is testable.
+
+Here's the thing about building software: most people start coding and figure out the architecture later. We did the opposite. We wrote the spec first. Then we built exactly what the spec said. And when the spec was wrong — when Chrome extensions couldn't create virtual microphones — we wrote a new spec and rebuilt.
+
+That's not slower. That's faster. Because you never build the wrong thing twice.
+
+### The Specs
+
+Every document that drove this project is open and readable:
+
+**Phase 1 — Chrome Extension (Core Pipeline)**
+- [Requirements](.kiro/specs/voice-translate-chrome-extension/requirements.md) — 34 requirements, 200+ acceptance criteria
+- [Design](.kiro/specs/voice-translate-chrome-extension/design.md) — system architecture, state machines, WebSocket protocols, data models
+- [Tasks](.kiro/specs/voice-translate-chrome-extension/tasks.md) — 30 implementation tasks
+
+**Phase 2 — Pipeline Hardening**
+- [Requirements](.kiro/specs/pipeline-hardening/requirements.md) — 10 requirements for production-quality pipeline
+- [Design](.kiro/specs/pipeline-hardening/design.md) — 7 new components, 15 correctness properties
+- [Tasks](.kiro/specs/pipeline-hardening/tasks.md) — 18 tasks with checkpoints
+
+**Phase 3 — Desktop App Rewrite (Virtual Microphone)**
+- [Requirements](.kiro/specs/desktop-app-rewrite/requirements.md) — 12 requirements for cross-platform desktop app
+- [Design](.kiro/specs/desktop-app-rewrite/design.md) — Electron + N-API architecture, 21 correctness properties
+- [Tasks](.kiro/specs/desktop-app-rewrite/tasks.md) — 19 tasks, 48 sub-tasks
+
+### The Hackathon
+
+Built for [ElevenLabs × Kiro Hackathon (Hack #5)](https://hacks.elevenlabs.io/hackathons/4) — a weekly hackathon challenging developers to build AI-powered apps using Kiro's spec-driven development and ElevenLabs APIs.
+
+The challenge: *"Build an AI-powered app using Kiro's spec-driven development and ElevenLabs APIs."*
+
+We built a real-time voice translator that clones your voice and speaks in any language. In under two seconds. Using a virtual microphone that works in every meeting app on every operating system.
+
+We didn't just use the APIs. We pushed them to their limits — Scribe v2 Realtime for 150ms speech-to-text, Flash v2.5 for 75ms voice synthesis, clause-level chunking for faster-than-sentence translation. And we documented every decision in specs that anyone can read, fork, and build on.
+
+---
+
 <p align="center">
   <br>
   <em>"The people who are crazy enough to think they can change the world are the ones who do."</em>
   <br><br>
   Built for <a href="https://hacks.elevenlabs.io/hackathons/4">ElevenLabs × Kiro Hackathon</a>
   <br>
-  <a href="https://elevenlabs.io">ElevenLabs</a> · <a href="https://kiro.dev">Kiro</a>
+  <a href="https://elevenlabs.io">ElevenLabs</a> · <a href="https://kiro.dev">Kiro</a> · <a href="https://hacks.elevenlabs.io/hackathons/4?sc_channel=sm&sc_publisher=TWITTER&sc_country=global&sc_geo=GLOBAL&sc_outcome=awareness">#ElevenHacks</a> · <a href="https://x.com/kirodotdev">#CodeWithKiro</a>
 </p>

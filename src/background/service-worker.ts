@@ -109,7 +109,11 @@ async function init(): Promise<void> {
 
 function setupMessageHandlers(): void {
   onMessage('SESSION_START', async (payload) => {
+    console.log('[VB:sw] SESSION_START received', payload);
     await ensureOffscreenDocument();
+
+    // Small delay to ensure offscreen document has initialized its message bus
+    await new Promise(resolve => setTimeout(resolve, 200));
 
     // Set up MessageChannel for audio bridge
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -120,6 +124,13 @@ function setupMessageHandlers(): void {
 
     // Forward to offscreen document
     sendMessage('SESSION_START', payload);
+    log('info', 'state', 'SESSION_START forwarded to offscreen');
+
+    // Forward to content script on the active tab so it can set up the virtual track
+    if (tabId !== undefined) {
+      sendMessage('SESSION_START', payload, tabId);
+      console.log('[VB:sw] SESSION_START forwarded to content script tab', tabId);
+    }
 
     await chrome.storage.session.set({
       sessionActive: true,
@@ -130,7 +141,16 @@ function setupMessageHandlers(): void {
   });
 
   onMessage('SESSION_STOP', async (payload) => {
+    console.log('[VB:sw] SESSION_STOP received', payload);
     sendMessage('SESSION_STOP', payload);
+
+    // Forward to content script on the active tab
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tabId = tabs[0]?.id;
+    if (tabId !== undefined) {
+      sendMessage('SESSION_STOP', payload, tabId);
+      console.log('[VB:sw] SESSION_STOP forwarded to content script tab', tabId);
+    }
 
     // Close MessageChannel ports
     closeMessageChannel();
@@ -144,6 +164,30 @@ function setupMessageHandlers(): void {
 
   onMessage('WIDGET_TOGGLE', () => {
     sendMessage('SESSION_START', { sourceLanguage: 'auto', targetLanguage: 'es' });
+  });
+
+  // Forward TTS audio from offscreen to the active meeting tab
+  onMessage('TTS_AUDIO_TO_MEETING', async (payload) => {
+    console.log('[VB:sw] Forwarding TTS_AUDIO_TO_MEETING', { sequenceId: payload.sequenceId, samples: payload.pcm.length });
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tabId = tabs[0]?.id;
+    if (tabId !== undefined) {
+      sendMessage('TTS_AUDIO_TO_MEETING', payload, tabId);
+    } else {
+      console.warn('[VB:sw] No active tab to forward TTS audio to');
+    }
+  });
+
+  // Forward pipeline stage updates (offscreen → popup/sidepanel)
+  onMessage('PIPELINE_STAGE_UPDATE', (payload) => {
+    console.log('[VB:sw] Pipeline stage:', payload.stage);
+    // Broadcast goes to all listeners (popup, sidepanel) via chrome.runtime.sendMessage
+    // which is already the default behavior of sendMessage without tabId
+  });
+
+  // Forward track status updates from content script to popup
+  onMessage('TRACK_STATUS_UPDATE', (payload) => {
+    console.log('[VB:sw] Track status:', payload);
   });
 }
 

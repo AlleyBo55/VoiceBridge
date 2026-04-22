@@ -23,6 +23,8 @@ const voiceTimeEl = document.getElementById('voiceTimeRemaining')!;
 const settingsBtn = document.getElementById('settingsBtn')!;
 const ghostModeBtn = document.getElementById('ghostModeBtn')!;
 const rouletteBtn = document.getElementById('rouletteBtn')!;
+const pipelineStageEl = document.getElementById('pipelineStage')!;
+const trackStatusEl = document.getElementById('trackStatus')!;
 
 // ── State ───────────────────────────────────────────────────
 
@@ -46,6 +48,23 @@ async function init(): Promise<void> {
   if (!onboarded) {
     chrome.tabs.create({ url: chrome.runtime.getURL('onboarding/onboarding.html') });
     return;
+  }
+
+  // Restore session state from storage (persists across popup open/close)
+  const sessionData = await chrome.storage.session.get('sessionActive');
+  if (sessionData['sessionActive']) {
+    sessionActive = true;
+    mainToggle.setAttribute('aria-checked', 'true');
+    const startData = await chrome.storage.session.get('sessionStartedAt');
+    sessionStartTime = (startData['sessionStartedAt'] as number) || Date.now();
+    startDurationTimer();
+  }
+
+  // Load voice profile status
+  const voiceId = await getSetting('voiceProfileId');
+  const voiceStatusEl = document.getElementById('voiceStatus')!;
+  if (voiceId) {
+    voiceStatusEl.textContent = 'Ready';
   }
 
   setupEventListeners();
@@ -111,6 +130,11 @@ function setupMessageHandlers(): void {
   onMessage('SESSION_STATE_CHANGED', (state: SessionState) => {
     sessionActive = state.active;
     mainToggle.setAttribute('aria-checked', String(state.active));
+    if (!state.active) {
+      pipelineStageEl.textContent = '[IDLE]';
+      trackStatusEl.textContent = '[NOT INJECTED]';
+      trackStatusEl.style.color = '';
+    }
   });
 
   onMessage('LATENCY_UPDATE', (measurement) => {
@@ -151,6 +175,31 @@ function setupMessageHandlers(): void {
     mainToggle.setAttribute('aria-checked', 'false');
     sessionActive = false;
     stopDurationTimer();
+  });
+
+  // Pipeline stage debug indicator
+  onMessage('PIPELINE_STAGE_UPDATE', ({ stage }) => {
+    const stageMap: Record<string, string> = {
+      IDLE: '[IDLE]',
+      CAPTURED: '[CAPTURING]',
+      TRANSCRIBED: '[TRANSCRIBING]',
+      TRANSLATED: '[TRANSLATING]',
+      SYNTHESIZED: '[SPEAKING]',
+      PLAYED: '[IDLE]',
+      DROPPED: '[IDLE]',
+    };
+    pipelineStageEl.textContent = stageMap[stage] ?? `[${stage}]`;
+  });
+
+  // Track injection debug indicator
+  onMessage('TRACK_STATUS_UPDATE', ({ injected, platform }) => {
+    if (injected) {
+      trackStatusEl.textContent = `[INJECTED] ${platform}`;
+      trackStatusEl.style.color = 'var(--success)';
+    } else {
+      trackStatusEl.textContent = '[NOT INJECTED]';
+      trackStatusEl.style.color = '';
+    }
   });
 }
 
