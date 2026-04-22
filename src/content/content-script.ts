@@ -1,37 +1,50 @@
 /**
  * Content script — injected into meeting pages.
- * Manages PlatformAdapter lifecycle, AudioBridgeReceiver,
- * RTCPeerConnection monitoring, floating widget, and cleanup.
+ * Manages PlatformAdapter lifecycle, virtual audio track,
+ * TTS audio reception, RTCPeerConnection monitoring, floating widget, and cleanup.
  */
 
 import { initMessageBus, sendMessage, onMessage } from '../lib/message-bus.js';
 import { detectPlatform } from '../lib/meeting-detector.js';
 import { createPlatformAdapter } from '../lib/platform-adapters.js';
 import type { PlatformAdapter } from '../lib/platform-adapters.js';
-import { AudioBridgeReceiver } from '../lib/audio-bridge.js';
 import type { MeetingPlatform, AudioRoutingState, DegradationLevel } from '../lib/types.js';
+
+// ── Constants ───────────────────────────────────────────────
+
+const OUTPUT_SAMPLE_RATE = 48000;
 
 // ── State ───────────────────────────────────────────────────
 
 let widgetInjected = false;
 let adapter: PlatformAdapter | null = null;
 let detectedPlatform: MeetingPlatform = 'none';
-const audioBridgeReceiver = new AudioBridgeReceiver();
 let widgetStatusEl: HTMLElement | null = null;
 let widgetIconEl: SVGElement | null = null;
+
+// Virtual track audio pipeline (content-script-local)
+let virtualAudioCtx: AudioContext | null = null;
+let virtualGainNode: GainNode | null = null;
+let virtualDestination: MediaStreamAudioDestinationNode | null = null;
+
+/** Whether the virtual track is currently injected into the meeting. */
+function isTrackInjected(): boolean {
+  return adapter?.isInjected() ?? false;
+}
 
 // ── Initialize ──────────────────────────────────────────────
 
 function init(): void {
   initMessageBus();
+  console.log('[VB:content] Content script initialized');
 
   detectedPlatform = detectPlatform(window.location.href);
   if (detectedPlatform === 'none') return;
 
+  console.log('[VB:content] Meeting detected:', detectedPlatform);
   sendMessage('MEETING_DETECTED', { platform: detectedPlatform, tabId: 0 });
 
   setupMessageHandlers();
-  setupAudioBridge();
   setupBeforeUnload();
 }
 
@@ -49,6 +62,25 @@ function setupMessageHandlers(): void {
   onMessage('MEETING_DETECTED', async ({ platform }) => {
     if (adapter) return; // Already initialized
     await initializeAdapter(platform);
+  });
+
+  // SESSION_START: create virtual track and inject into meeting
+  onMessage('SESSION_START', async () => {
+    console.log('[VB:content] SESSION_START received — setting up virtual track');
+    await setupVirtualTrack();
+    await injectTrackIntoMeeting();
+  });
+
+  // SESSION_STOP: restore original track and tear down audio
+  onMessage('SESSION_STOP', async () => {
+    console.log('[VB:content] SESSION_STOP received — restoring original track');
+    await teardownVirtualTrack();
+  });
+
+  // Receive TTS audio chunks from offscreen (via service worker relay)
+  onMessage('TTS_AUDIO_TO_MEETING', ({ pcm, sequenceId }) => {
+    console.log('[VB:content] TTS_AUDIO_TO_MEETING received', { samples: pcm.length, sequenceId });
+    playPcmToVirtualTrack(pcm, sequenceId);
   });
 
   // Update widget based on audio routing state changes
@@ -82,79 +114,151 @@ async function initializeAdapter(platform: MeetingPlatform): Promise<void> {
   }
 }
 
-// ── AudioBridge ─────────────────────────────────────────────
+// ── Virtual Track Audio Pipeline ─────────────────────────────
 
-function setupAudioBridge(): void {
-  // Receive audio chunks from offscreen and route to adapter
-  audioBridgeReceiver.onAudioChunk = (_pcm, _sequenceId) => {
-    // Audio chunks are routed to the platform adapter's virtual track
-    // via the AudioOutputModule's getMixedTrack() — the adapter already
-    // has the virtual track injected. Audio data flows through the
-    // MediaStreamAudioDestinationNode in the offscreen document.
-  };
+/**
+ * Create a local AudioContext + MediaStreamDestination for the virtual track.
+ * This runs entirely in the content script — no shared state with offscreen.
+ */
+async function setupVirtualTrack(): Promise<void> {
+  if (virtualAudioCtx) {
+    console.log('[VB:content] Virtual track already set up');
+    return;
+  }
 
-  // Handle track commands from offscreen
-  audioBridgeReceiver.onTrackCommand = async (command) => {
-    if (!adapter) {
-      audioBridgeReceiver.sendTrackResponse(false, 'No adapter initialized');
-      return;
-    }
+  virtualAudioCtx = new AudioContext({ sampleRate: OUTPUT_SAMPLE_RATE });
+  virtualGainNode = virtualAudioCtx.createGain();
+  virtualDestination = virtualAudioCtx.createMediaStreamDestination();
+  virtualGainNode.connect(virtualDestination);
 
+  console.log('[VB:content] Virtual AudioContext created (48kHz)');
+}
+
+/**
+ * Inject the virtual track into the meeting via the platform adapter.
+ */
+async function injectTrackIntoMeeting(): Promise<void> {
+  if (!virtualDestination || !adapter) {
+    console.warn('[VB:content] Cannot inject track — missing destination or adapter');
+    sendMessage('TRACK_STATUS_UPDATE', { injected: false, platform: detectedPlatform });
+    return;
+  }
+
+  const virtualTrack = virtualDestination.stream.getAudioTracks()[0];
+  if (!virtualTrack) {
+    console.error('[VB:content] No audio track on virtual destination');
+    sendMessage('TRACK_STATUS_UPDATE', { injected: false, platform: detectedPlatform });
+    return;
+  }
+
+  try {
+    await adapter.injectVirtualTrack(virtualTrack);
+    console.log('[VB:content] Virtual track injected into meeting successfully');
+    sendMessage('TRACK_STATUS_UPDATE', { injected: true, platform: detectedPlatform });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[VB:content] Track injection failed:', message);
+    sendMessage('TRACK_STATUS_UPDATE', { injected: false, platform: detectedPlatform });
+    sendMessage('ERROR', {
+      code: 'track-replace-failed',
+      message,
+      userMessage: 'Failed to inject audio into meeting.',
+      action: 'retry',
+    });
+  }
+}
+
+/**
+ * Receive PCM number[] from offscreen, convert to Float32, resample 24kHz→48kHz,
+ * and play through the virtual track's AudioContext.
+ */
+function playPcmToVirtualTrack(pcmNumbers: number[], _sequenceId: number): void {
+  if (!virtualAudioCtx || !virtualGainNode) {
+    console.warn('[VB:content] No virtual AudioContext — dropping audio chunk');
+    return;
+  }
+
+  // Convert number[] back to Int16Array
+  const int16 = new Int16Array(pcmNumbers);
+
+  // Convert Int16 → Float32 (divide by 32768)
+  const float32 = new Float32Array(int16.length);
+  for (let i = 0; i < int16.length; i++) {
+    float32[i] = (int16[i] ?? 0) / 32768.0;
+  }
+
+  // Resample 24kHz → 48kHz (2x via linear interpolation)
+  const resampledLength = float32.length * 2;
+  const resampled = new Float32Array(resampledLength);
+  for (let i = 0; i < float32.length; i++) {
+    const curr = float32[i] ?? 0;
+    const next = float32[Math.min(i + 1, float32.length - 1)] ?? 0;
+    resampled[i * 2] = curr;
+    resampled[i * 2 + 1] = (curr + next) / 2;
+  }
+
+  // Create AudioBuffer at 48kHz and play
+  const audioBuffer = virtualAudioCtx.createBuffer(1, resampledLength, OUTPUT_SAMPLE_RATE);
+  audioBuffer.getChannelData(0).set(resampled);
+
+  const source = virtualAudioCtx.createBufferSource();
+  source.buffer = audioBuffer;
+  source.connect(virtualGainNode);
+  source.start();
+}
+
+/**
+ * Tear down the virtual track: restore original, close AudioContext.
+ */
+async function teardownVirtualTrack(): Promise<void> {
+  if (adapter && isTrackInjected()) {
     try {
-      switch (command) {
-        case 'inject':
-          // The virtual track is managed by the offscreen AudioOutputModule
-          // and injected via the adapter. For now, acknowledge the command.
-          audioBridgeReceiver.sendTrackResponse(true);
-          break;
-        case 'restore':
-          await adapter.restoreOriginalTrack();
-          audioBridgeReceiver.sendTrackResponse(true);
-          break;
-        case 'status':
-          audioBridgeReceiver.sendTrackResponse(adapter.isInjected());
-          break;
-      }
+      await adapter.restoreOriginalTrack();
+      console.log('[VB:content] Original track restored');
     } catch (err) {
-      audioBridgeReceiver.sendTrackResponse(
-        false,
-        err instanceof Error ? err.message : 'Track command failed',
-      );
+      console.error('[VB:content] Failed to restore original track:', err);
     }
-  };
+  }
 
-  // Handle state sync from offscreen
-  audioBridgeReceiver.onStateSync = (routingState, _echoState) => {
-    updateWidgetIcon(routingState);
-  };
+  sendMessage('TRACK_STATUS_UPDATE', { injected: false, platform: detectedPlatform });
 
-  // Listen for MessagePort from service worker
-  chrome.runtime.onMessage.addListener(
-    (message: unknown, _sender: chrome.runtime.MessageSender) => {
-      const msg = message as { type?: string } | undefined;
-      if (msg?.type === 'AUDIO_BRIDGE_PORT') {
-        // Port will be in the message event ports
-      }
-    },
-  );
+  if (virtualDestination) {
+    for (const track of virtualDestination.stream.getTracks()) {
+      track.stop();
+    }
+    virtualDestination = null;
+  }
 
-  // Receive port via chrome.runtime.onConnect or direct message with port transfer
-  // The service worker sends the port via chrome.tabs.sendMessage with transferables
-  // In MV3, ports are transferred via the message event's ports array
+  virtualGainNode?.disconnect();
+  virtualGainNode = null;
+
+  if (virtualAudioCtx) {
+    await virtualAudioCtx.close();
+    virtualAudioCtx = null;
+  }
+
+  console.log('[VB:content] Virtual track torn down');
 }
 
 // ── beforeunload Handler ────────────────────────────────────
 
 function setupBeforeUnload(): void {
   window.addEventListener('beforeunload', () => {
+    console.log('[VB:content] Page unloading — cleaning up');
     sendMessage('SESSION_STOP', { reason: 'tab-closed' });
 
-    if (adapter?.isInjected()) {
+    if (adapter && isTrackInjected()) {
       // Best-effort restore — may not complete before unload
       void adapter.restoreOriginalTrack();
     }
 
-    audioBridgeReceiver.close();
+    // Best-effort teardown of virtual audio
+    if (virtualDestination) {
+      for (const track of virtualDestination.stream.getTracks()) {
+        track.stop();
+      }
+    }
+    void virtualAudioCtx?.close();
   });
 }
 
