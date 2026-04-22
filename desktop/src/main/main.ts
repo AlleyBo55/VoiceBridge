@@ -4,7 +4,7 @@
  * settings store, and IPC handlers.
  */
 
-import { app, BrowserWindow, Tray, Menu, nativeImage, globalShortcut } from 'electron';
+import { app, BrowserWindow, Tray, Menu, nativeImage, globalShortcut, ipcMain } from 'electron';
 import { join } from 'path';
 import { MockNativeAddon } from '../native/native-addon.js';
 import { DesktopSettingsStore } from './desktop-settings-store.js';
@@ -14,6 +14,7 @@ import { DriverInstaller } from './driver-installer.js';
 import { AutoStartManager } from './auto-start.js';
 import { LanguageService } from './language-service.js';
 import { PanicStop } from './panic-stop.js';
+import { DesktopVoiceProfile } from './desktop-voice-profile.js';
 import { handleInvoke, sendToRenderer } from './electron-ipc.js';
 
 // ── State ───────────────────────────────────────────────────
@@ -29,6 +30,7 @@ let driverInstaller: DriverInstaller;
 let autoStart: AutoStartManager;
 let languageService: LanguageService;
 let panicStop: PanicStop;
+let voiceProfile: DesktopVoiceProfile;
 
 // ── Window Creation ─────────────────────────────────────────
 
@@ -189,9 +191,113 @@ function registerIPCHandlers(): void {
     return driverInstaller.uninstall();
   });
 
+  // Key validation — registered directly since these aren't in the typed channel map
+  ipcMain.handle('validate:elevenlabs', async (_event, params: { key: string }) => {
+    try {
+      const res = await fetch('https://api.elevenlabs.io/v1/user', {
+        headers: { 'xi-api-key': params.key },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (res.ok) return { valid: true };
+      if (res.status === 401) return { valid: false, error: 'Invalid API key' };
+      if (res.status === 402) return { valid: false, error: 'Quota exhausted' };
+      return { valid: false, error: `HTTP ${res.status}` };
+    } catch (err) {
+      return { valid: false, error: err instanceof Error ? err.message : 'Connection failed' };
+    }
+  });
+  ipcMain.handle('validate:llm', async (_event, params: { provider: string; key: string }) => {
+    try {
+      let url: string;
+      const headers: Record<string, string> = {};
+      if (params.provider === 'anthropic') {
+        url = 'https://api.anthropic.com/v1/messages';
+        headers['x-api-key'] = params.key;
+        headers['anthropic-version'] = '2023-06-01';
+      } else if (params.provider === 'openrouter') {
+        url = 'https://openrouter.ai/api/v1/models';
+        headers['Authorization'] = `Bearer ${params.key}`;
+      } else {
+        url = 'https://api.openai.com/v1/models';
+        headers['Authorization'] = `Bearer ${params.key}`;
+      }
+      const res = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
+      if (res.ok) return { valid: true };
+      if (res.status === 401) return { valid: false, error: 'Invalid API key' };
+      return { valid: false, error: `HTTP ${res.status}` };
+    } catch (err) {
+      return { valid: false, error: err instanceof Error ? err.message : 'Connection failed' };
+    }
+  });
+  // Fetch available models for a provider (for model selector)
+  ipcMain.handle('models:list', async (_event, params: { provider: string; key: string }) => {
+    try {
+      let url: string;
+      const headers: Record<string, string> = {};
+      if (params.provider === 'openrouter') {
+        url = 'https://openrouter.ai/api/v1/models';
+        headers['Authorization'] = `Bearer ${params.key}`;
+      } else if (params.provider === 'openai') {
+        url = 'https://api.openai.com/v1/models';
+        headers['Authorization'] = `Bearer ${params.key}`;
+      } else {
+        // Anthropic doesn't have a models list endpoint — return hardcoded
+        return [
+          { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4' },
+          { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku' },
+        ];
+      }
+      const res = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
+      if (!res.ok) return [];
+      const data = await res.json() as { data?: Array<{ id: string; name?: string }> };
+      const models = data.data ?? [];
+      // Filter to chat/completion models, return top 30
+      return models
+        .filter((m: { id: string }) => {
+          const id = m.id.toLowerCase();
+          // OpenRouter: show all. OpenAI: filter to gpt models
+          if (params.provider === 'openrouter') return true;
+          return id.includes('gpt') || id.includes('o1') || id.includes('o3');
+        })
+        .slice(0, 30)
+        .map((m: { id: string; name?: string }) => ({ id: m.id, name: m.name ?? m.id }));
+    } catch {
+      return [];
+    }
+  });
+
   // Languages
   handleInvoke('languages:list', async () => {
     return languageService.getLanguages();
+  });
+
+  // Voice profile
+  handleInvoke('voice:start-recording', () => {
+    voiceProfile.startRecording();
+  });
+  handleInvoke('voice:stop-recording', async (params) => {
+    // Renderer sends audio data as base64 string via IPC
+    const audioData = params as { audioBase64: string };
+    const buffer = Buffer.from(audioData.audioBase64, 'base64');
+    return voiceProfile.stopRecording(buffer);
+  });
+  handleInvoke('voice:upload', async () => {
+    return voiceProfile.upload();
+  });
+  handleInvoke('voice:delete', async (params) => {
+    await voiceProfile.deleteProfile(params.voiceId);
+  });
+  handleInvoke('voice:preview', async (params) => {
+    return voiceProfile.preview(params.voiceId, params.text, params.language);
+  });
+  ipcMain.handle('voice:list', async () => {
+    return voiceProfile.listVoices();
+  });
+  ipcMain.handle('voice:set-active', async (_event, params: { voiceId: string }) => {
+    await voiceProfile.setActiveVoice(params.voiceId);
+  });
+  ipcMain.handle('voice:get-active', async () => {
+    return voiceProfile.getActiveVoiceId();
   });
 
   // Debug
@@ -208,9 +314,11 @@ app.whenReady().then(async () => {
   await settings.initializeInstall();
 
   // Initialize services
-  driverInstaller = new DriverInstaller(nativeAddon);
+  driverInstaller = new DriverInstaller(nativeAddon, settings, debugLog);
+  await driverInstaller.initialize();
   autoStart = new AutoStartManager();
   languageService = new LanguageService(settings);
+  voiceProfile = new DesktopVoiceProfile(settings, debugLog);
 
   // Create window and tray
   mainWindow = createMainWindow();
