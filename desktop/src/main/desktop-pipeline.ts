@@ -309,7 +309,7 @@ export class DesktopPipeline {
             this.#debugLog.log('info', 'pipeline', `STT committed (new): "${newText.slice(0, 80)}"`);
             this.#latencyMonitor.markSTTEnd(this.#currentSequenceId);
             this.#emitStage(this.#currentSequenceId, 'TRANSCRIBED');
-            this.#translateAndSpeak(newText, this.#currentSequenceId);
+            this.#enqueueUtterance(newText, this.#currentSequenceId);
           }
         }
         this.#lastPartialText = '';
