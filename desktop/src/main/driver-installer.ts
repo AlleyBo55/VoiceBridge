@@ -132,6 +132,13 @@ export class DriverInstaller {
   }
 
   #detectMacOS(): { installed: boolean; name: string } {
+    // Check brew first — most reliable since we install via brew
+    try {
+      const brewList = execSync('brew list blackhole-2ch 2>/dev/null', { encoding: 'utf8', timeout: 5000 });
+      if (brewList.trim().length > 0) return { installed: true, name: 'BlackHole 2ch' };
+    } catch { /* not installed via brew */ }
+
+    // Check system_profiler for any virtual audio device
     try {
       const output = execSync('system_profiler SPAudioDataType 2>/dev/null', { encoding: 'utf8', timeout: 5000 });
       const known = ['BlackHole', 'Soundflower', 'Loopback', 'VB-Cable', 'VoiceBridge'];
@@ -140,6 +147,7 @@ export class DriverInstaller {
       }
     } catch { /* profiler failed */ }
 
+    // Check HAL plugins directory
     try {
       const hal = execSync('ls /Library/Audio/Plug-Ins/HAL/ 2>/dev/null', { encoding: 'utf8', timeout: 3000 });
       if (hal.includes('BlackHole')) return { installed: true, name: 'BlackHole' };
