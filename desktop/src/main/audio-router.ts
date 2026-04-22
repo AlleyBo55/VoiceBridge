@@ -128,9 +128,9 @@ const DEFAULT_CONFIG: AudioRouterConfig = {
   captureDeviceId: null,
   captureSampleRate: 16000,
   outputSampleRate: 48000,
-  noiseGateThresholdDb: -40,
-  vadSpeechOnsetMs: 300,
-  vadSpeechOffsetMs: 800,
+  noiseGateThresholdDb: -50,
+  vadSpeechOnsetMs: 200,
+  vadSpeechOffsetMs: 600,
   ghostModeEnabled: false,
 };
 
@@ -151,6 +151,8 @@ export class AudioRouter {
 
   // Callbacks
   onAudioChunk: ((chunk: Int16Array, sequenceId: number) => void) | null = null;
+  /** Called for EVERY audio chunk from the mic, regardless of noise gate. Use for STT. */
+  onRawAudioChunk: ((chunk: Int16Array) => void) | null = null;
   onVADStateChange: ((state: VADState) => void) | null = null;
   onSpeechEnd: (() => void) | null = null;
 
@@ -289,6 +291,9 @@ export class AudioRouter {
     if (!this.#running) return;
 
     const samples = new Int16Array(pcm.buffer, pcm.byteOffset, pcm.length / 2);
+
+    // ALWAYS send raw audio to STT (before noise gate)
+    this.onRawAudioChunk?.(samples);
 
     // Calibrate reference level during first 5 seconds
     if (Date.now() - this.#calibrationStartedAt < CALIBRATION_DURATION_MS) {

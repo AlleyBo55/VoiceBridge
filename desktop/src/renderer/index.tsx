@@ -353,9 +353,12 @@ function OnboardingView({ onComplete }: { onComplete: () => void }) {
     setError('');
     try {
       const blob = new Blob(recordedChunks, { type: 'audio/webm' });
-      // Convert blob to base64 for IPC transfer
+      // Convert blob to base64 for IPC transfer (chunked to avoid stack overflow)
       const arrayBuffer = await blob.arrayBuffer();
-      const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+      const bytes = new Uint8Array(arrayBuffer);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]!);
+      const base64 = btoa(binary);
 
       await vb.stopRecording(base64);
       const id = await vb.uploadVoice();
@@ -614,8 +617,6 @@ function SettingsView({ onBack }: { onBack: () => void }) {
   const [llmKey, setLlmKey] = useState('');
   const [llmProvider, setLlmProvider] = useState('openrouter');
   const [llmModel, setLlmModel] = useState('openai/gpt-4o');
-  const [availableModels, setAvailableModels] = useState<Array<{ id: string; name: string }>>([]);
-  const [loadingModels, setLoadingModels] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
@@ -634,17 +635,9 @@ function SettingsView({ onBack }: { onBack: () => void }) {
   const [recordingTimer, setRecordingTimer] = useState<ReturnType<typeof setInterval> | null>(null);
   const [sourceLang, setSourceLang] = useState('auto');
   const [targetLang, setTargetLang] = useState('es');
-
-  // Fetch models when provider or key changes
-  const fetchModels = useCallback(async (provider: string, key: string) => {
-    if (!key.trim()) { setAvailableModels([]); return; }
-    setLoadingModels(true);
-    try {
-      const models = await vb.listModels(provider, key.trim());
-      setAvailableModels(models);
-    } catch { setAvailableModels([]); }
-    setLoadingModels(false);
-  }, []);
+  const [micDevices, setMicDevices] = useState<Array<{ id: string; name: string }>>([]);
+  const [selectedMic, setSelectedMic] = useState('');
+  const [vadSensitivity, setVadSensitivity] = useState('medium');
 
   const refreshVoices = useCallback(async () => {
     setLoadingVoices(true);
@@ -663,9 +656,22 @@ function SettingsView({ onBack }: { onBack: () => void }) {
     const tl = await vb.getSetting('targetLanguage') as string;
     if (sl) setSourceLang(sl);
     if (tl) setTargetLang(tl);
+    // Load mic devices
+    try {
+      const devices = await vb.listDevices();
+      setMicDevices(devices.map(d => ({ id: d.id, name: d.name })));
+      const savedMic = await vb.getSetting('selectedMicDeviceId') as string;
+      if (savedMic) setSelectedMic(savedMic);
+      else if (devices.length > 0) {
+        // Default: pick first non-BlackHole device
+        const real = devices.find(d => !d.name.toLowerCase().includes('blackhole') && !d.name.toLowerCase().includes('cable'));
+        setSelectedMic(real?.id ?? devices[0]?.id ?? '');
+      }
+    } catch {}
+    const vad = await vb.getSetting('vadSensitivity') as string;
+    if (vad) setVadSensitivity(vad);
     await refreshVoices();
-    if (llm && prov) await fetchModels(prov, llm);
-  })(); }, [refreshVoices, fetchModels]);
+  })(); }, [refreshVoices]);
 
   const handleValidateAndSave = useCallback(async () => {
     if (!elevenLabsKey.trim()) { setError('ElevenLabs API key is required'); return; }
@@ -679,7 +685,7 @@ function SettingsView({ onBack }: { onBack: () => void }) {
     const llmR = await vb.validateLLMKey(llmProvider, llmKey.trim());
     setLlmValidating(false); setLlmValid(llmR.valid);
     if (!llmR.valid) { setError('LLM: ' + (llmR.error ?? 'Invalid')); setSaving(false); return; }
-    try { await vb.setSetting('elevenLabsApiKey', elevenLabsKey.trim()); await vb.setSetting('llmApiKey', llmKey.trim()); await vb.setSetting('llmProvider', llmProvider); await vb.setSetting('openRouterModel', llmModel); setSaved(true); setTimeout(() => setSaved(false), 3000); await refreshVoices(); await fetchModels(llmProvider, llmKey.trim()); } catch { setError('Failed to save.'); }
+    try { await vb.setSetting('elevenLabsApiKey', elevenLabsKey.trim()); await vb.setSetting('llmApiKey', llmKey.trim()); await vb.setSetting('llmProvider', llmProvider); await vb.setSetting('openRouterModel', llmModel); setSaved(true); setTimeout(() => setSaved(false), 3000); await refreshVoices(); } catch { setError('Failed to save.'); }
     finally { setSaving(false); }
   }, [elevenLabsKey, llmKey, llmProvider, refreshVoices]);
 
@@ -714,7 +720,10 @@ function SettingsView({ onBack }: { onBack: () => void }) {
     try {
       const blob = new Blob(recordedChunks, { type: 'audio/webm' });
       const buf = await blob.arrayBuffer();
-      const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+      const bytes = new Uint8Array(buf);
+      let bin = '';
+      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]!);
+      const b64 = btoa(bin);
       await vb.stopRecording(b64); await vb.uploadVoice();
       setRecordedChunks([]); setRecordingDuration(0); await refreshVoices();
     } catch (err) { setError(err instanceof Error ? err.message : 'Upload failed'); }
@@ -751,7 +760,7 @@ function SettingsView({ onBack }: { onBack: () => void }) {
         </div>
         <div>
           <label class="label" style={{ display: 'block', marginBottom: 'var(--space-xs)' }}>LLM PROVIDER</label>
-          <select class="input-field" value={llmProvider} onChange={(e) => { const p = (e.target as HTMLSelectElement).value; setLlmProvider(p); setLlmValid(null); setAvailableModels([]); if (llmKey.trim()) fetchModels(p, llmKey.trim()); }}>
+          <select class="input-field" value={llmProvider} onChange={(e) => { const p = (e.target as HTMLSelectElement).value; setLlmProvider(p); setLlmValid(null); }}>
             <option value="openrouter">OpenRouter</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option>
           </select>
         </div>
@@ -759,26 +768,64 @@ function SettingsView({ onBack }: { onBack: () => void }) {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-xs)' }}>
             <label class="label">LLM API KEY</label>{vIcon(llmValid, llmValidating)}
           </div>
-          <input class="input-field" type="password" value={llmKey} onInput={(e) => { setLlmKey((e.target as HTMLInputElement).value); setLlmValid(null); }} onBlur={() => { if (llmKey.trim()) fetchModels(llmProvider, llmKey.trim()); }} autocomplete="off" />
+          <input class="input-field" type="password" value={llmKey} onInput={(e) => { setLlmKey((e.target as HTMLInputElement).value); setLlmValid(null); }} autocomplete="off" />
         </div>
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-xs)' }}>
-            <label class="label">MODEL</label>
-            {loadingModels && <span class="mono" style={{ color: 'var(--text-disabled)', fontSize: 'var(--caption)' }}>◐ LOADING...</span>}
-          </div>
-          {availableModels.length > 0 ? (
-            <select class="input-field" value={llmModel} onChange={(e) => setLlmModel((e.target as HTMLSelectElement).value)}>
-              {availableModels.map(m => (
-                <option key={m.id} value={m.id}>{m.name || m.id}</option>
-              ))}
-            </select>
-          ) : (
-            <input class="input-field" type="text" value={llmModel} placeholder="openai/gpt-4o"
-              onInput={(e) => setLlmModel((e.target as HTMLInputElement).value)} />
-          )}
-          <div class="mono" style={{ fontSize: '10px', color: 'var(--text-disabled)', marginTop: 'var(--space-2xs)' }}>
-            {llmProvider === 'openrouter' ? 'Browse models at openrouter.ai/models' : llmProvider === 'openai' ? 'e.g. gpt-4o, gpt-4o-mini' : 'e.g. claude-sonnet-4-20250514'}
-          </div>
+          <label class="label" style={{ display: 'block', marginBottom: 'var(--space-xs)' }}>MODEL</label>
+          <select class="input-field" value={llmModel} onChange={(e) => setLlmModel((e.target as HTMLSelectElement).value)}>
+            {llmProvider === 'openrouter' && <>
+              <optgroup label="OpenAI">
+                <option value="openai/gpt-5.4">GPT-5.4</option>
+                <option value="openai/gpt-5.4-mini">GPT-5.4 Mini</option>
+                <option value="openai/gpt-4o">GPT-4o</option>
+                <option value="openai/gpt-4o-mini">GPT-4o Mini</option>
+                <option value="openai/o3-pro">o3 Pro</option>
+                <option value="openai/o3-mini">o3 Mini</option>
+              </optgroup>
+              <optgroup label="Anthropic">
+                <option value="anthropic/claude-opus-4.6">Claude Opus 4.6</option>
+                <option value="anthropic/claude-sonnet-4">Claude Sonnet 4</option>
+                <option value="anthropic/claude-3.5-haiku">Claude 3.5 Haiku</option>
+              </optgroup>
+              <optgroup label="Google">
+                <option value="google/gemini-3.1-pro">Gemini 3.1 Pro</option>
+                <option value="google/gemini-3.1-flash-lite">Gemini 3.1 Flash Lite</option>
+                <option value="google/gemini-2.5-flash">Gemini 2.5 Flash</option>
+                <option value="google/gemini-2.5-pro">Gemini 2.5 Pro</option>
+              </optgroup>
+              <optgroup label="DeepSeek">
+                <option value="deepseek/deepseek-chat-v3-0324">DeepSeek V3</option>
+                <option value="deepseek/deepseek-r1">DeepSeek R1</option>
+              </optgroup>
+              <optgroup label="Kimi (Moonshot)">
+                <option value="moonshotai/kimi-k2">Kimi K2</option>
+              </optgroup>
+              <optgroup label="GLM (Zhipu)">
+                <option value="zhipu/glm-4-plus">GLM-4 Plus</option>
+              </optgroup>
+              <optgroup label="xAI">
+                <option value="x-ai/grok-4">Grok 4</option>
+                <option value="x-ai/grok-3-mini">Grok 3 Mini</option>
+              </optgroup>
+              <optgroup label="Qwen (Alibaba)">
+                <option value="qwen/qwen3-235b-a22b">Qwen 3 235B</option>
+                <option value="qwen/qwen3-30b-a3b">Qwen 3 30B</option>
+              </optgroup>
+            </>}
+            {llmProvider === 'openai' && <>
+              <option value="gpt-5.4">GPT-5.4</option>
+              <option value="gpt-5.4-mini">GPT-5.4 Mini</option>
+              <option value="gpt-4o">GPT-4o</option>
+              <option value="gpt-4o-mini">GPT-4o Mini</option>
+              <option value="o3-pro">o3 Pro</option>
+              <option value="o3-mini">o3 Mini</option>
+            </>}
+            {llmProvider === 'anthropic' && <>
+              <option value="claude-opus-4-20260301">Claude Opus 4.6</option>
+              <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
+              <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku</option>
+            </>}
+          </select>
         </div>
         <button class="btn-primary" onClick={handleValidateAndSave} disabled={saving} style={{ width: '100%' }}>
           {saving ? 'VALIDATING...' : saved ? 'SAVED ✓ KEYS VALID' : 'VALIDATE & SAVE'}
@@ -811,6 +858,41 @@ function SettingsView({ onBack }: { onBack: () => void }) {
               {TTS_LANGUAGES.filter(l => l.code !== sourceLang).map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
             </select>
           </div>
+        </div>
+      </div>
+
+      {/* Microphone */}
+      <div class="card" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+        <div class="label">MICROPHONE INPUT</div>
+        <div class="mono" style={{ fontSize: '10px', color: 'var(--text-disabled)', lineHeight: 1.4 }}>
+          Select your real microphone. Do NOT select BlackHole — that's the virtual output.
+        </div>
+        <select class="input-field" value={selectedMic} onChange={async (e) => {
+          const id = (e.target as HTMLSelectElement).value;
+          setSelectedMic(id);
+          await vb.selectDevice(id);
+          await vb.setSetting('selectedMicDeviceId', id);
+        }}>
+          {micDevices.map(d => (
+            <option key={d.id} value={d.id}>{d.name}{d.name.toLowerCase().includes('blackhole') ? ' ⚠️ (virtual output)' : ''}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* VAD Sensitivity */}
+      <div class="card" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+        <div class="label">VOICE DETECTION SENSITIVITY</div>
+        <select class="input-field" value={vadSensitivity} onChange={async (e) => {
+          const val = (e.target as HTMLSelectElement).value;
+          setVadSensitivity(val);
+          await vb.setSetting('vadSensitivity', val);
+        }}>
+          <option value="low">Low — noisy environment, only loud speech triggers</option>
+          <option value="medium">Medium — balanced (default)</option>
+          <option value="high">High — quiet environment, catches whispers</option>
+        </select>
+        <div class="mono" style={{ fontSize: '10px', color: 'var(--text-disabled)' }}>
+          Controls how sensitive the mic is to detecting speech vs silence
         </div>
       </div>
 
@@ -1202,9 +1284,14 @@ function App() {
         </div>
       )}
       {state.driverInstalled && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)' }}>
-          <span class="mono status-green" style={{ fontSize: 'var(--caption)' }}>●</span>
-          <span class="label">VIRTUAL MIC READY</span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2xs)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)' }}>
+            <span class="mono status-green" style={{ fontSize: 'var(--caption)' }}>●</span>
+            <span class="label">VIRTUAL MIC READY</span>
+          </div>
+          <div class="mono" style={{ fontSize: '10px', color: 'var(--text-disabled)', paddingLeft: 16 }}>
+            Select "BlackHole 2ch" (macOS) / "VoiceBridge Mic" (Linux) / "CABLE Output" (Windows) in your meeting app
+          </div>
         </div>
       )}
 
