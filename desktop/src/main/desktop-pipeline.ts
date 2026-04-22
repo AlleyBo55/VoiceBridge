@@ -28,7 +28,7 @@ const WebSocket = require('ws') as typeof import('ws').default;
 // ── Constants ───────────────────────────────────────────────
 
 const DEFAULT_VOICE_ID = 'JBFqnCBsd6RMkjVDRZzb'; // "George" built-in voice
-const STT_ENDPOINT = 'wss://api.elevenlabs.io/v1/speech-to-text/stream';
+const STT_ENDPOINT = 'wss://api.elevenlabs.io/v1/speech-to-text/realtime';
 const HEARTBEAT_INTERVAL_MS = 15000;
 const CHUNK_LENGTH_SCHEDULE = [50, 120, 200, 260];
 
@@ -214,18 +214,13 @@ export class DesktopPipeline {
 
   async #connectSTT(): Promise<void> {
     return new Promise<void>((resolve) => {
-      const ws = new WebSocket(STT_ENDPOINT);
+      const url = `${STT_ENDPOINT}?model_id=scribe_v2_realtime`;
+      const ws = new WebSocket(url, {
+        headers: { 'xi-api-key': this.#apiKey },
+      });
       this.#sttWs = ws;
 
       ws.on('open', () => {
-        // Send config
-        ws.send(JSON.stringify({
-          type: 'config',
-          encoding: 'pcm_16000',
-          language_code: this.#sourceLanguage,
-          model: 'scribe_v2_realtime',
-        }));
-
         this.#emitConnectionState('stt', { status: 'connected' });
         this.#debugLog.log('info', 'connection', 'STT connected');
 
