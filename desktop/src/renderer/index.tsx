@@ -36,6 +36,7 @@ interface AppState {
   driverInstalled: boolean;
   hasApiKeys: boolean;
   onboardingComplete: boolean;
+  loading: boolean;
   view: 'onboarding' | 'main' | 'settings';
 }
 
@@ -48,6 +49,7 @@ type AppAction =
   | { type: 'SET_DRIVER'; installed: boolean }
   | { type: 'SET_API_KEYS'; hasKeys: boolean }
   | { type: 'SET_ONBOARDING'; complete: boolean }
+  | { type: 'SET_LOADED' }
   | { type: 'SET_VIEW'; view: 'onboarding' | 'main' | 'settings' };
 
 const initialState: AppState = {
@@ -63,7 +65,8 @@ const initialState: AppState = {
   driverInstalled: false,
   hasApiKeys: false,
   onboardingComplete: false,
-  view: 'onboarding',
+  loading: true,
+  view: 'main',
 };
 
 function reducer(state: AppState, action: AppAction): AppState {
@@ -89,6 +92,8 @@ function reducer(state: AppState, action: AppAction): AppState {
       return { ...state, hasApiKeys: action.hasKeys };
     case 'SET_ONBOARDING':
       return { ...state, onboardingComplete: action.complete, view: action.complete ? 'main' : 'onboarding' };
+    case 'SET_LOADED':
+      return { ...state, loading: false };
     case 'SET_VIEW':
       return { ...state, view: action.view };
   }
@@ -287,7 +292,7 @@ function OnboardingView({ onComplete }: { onComplete: () => void }) {
   // ── Step 1: API Keys ────────────────────────────────────
   if (step === 'keys') {
     return (
-      <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', padding: 'var(--space-lg)', gap: 'var(--space-lg)' }}>
+      <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', padding: 'var(--space-lg)', gap: 'var(--space-md)', overflow: 'auto' }}>
         <div style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--heading)', color: 'var(--text-display)', letterSpacing: 'var(--ls-heading)' }}>
           VOICEBRIDGE
         </div>
@@ -339,7 +344,7 @@ function OnboardingView({ onComplete }: { onComplete: () => void }) {
     const tooShort = recordingDuration < 10000 && !recording && recordedChunks.length > 0;
 
     return (
-      <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', padding: 'var(--space-lg)', gap: 'var(--space-lg)' }}>
+      <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', padding: 'var(--space-lg)', gap: 'var(--space-md)', overflow: 'auto' }}>
         <div style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--heading)', color: 'var(--text-display)', letterSpacing: 'var(--ls-heading)' }}>
           VOICEBRIDGE
         </div>
@@ -771,6 +776,8 @@ function App() {
 
       const driverStatus = await vb.getDriverStatus();
       dispatch({ type: 'SET_DRIVER', installed: driverStatus.state === 'installed' });
+
+      dispatch({ type: 'SET_LOADED' });
     })();
   }, []);
 
@@ -842,6 +849,68 @@ function App() {
     dispatch({ type: 'SET_ONBOARDING', complete: true });
   }, []);
 
+  // Loading — animated splash while settings load
+  if (state.loading) {
+    return (
+      <div style={{
+        width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center', background: 'var(--black)', gap: 'var(--space-lg)',
+      }}>
+        <style>{`
+          @keyframes spinRing { to { transform: rotate(360deg); } }
+          @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(12px); }
+            to { opacity: 1; transform: translateY(0); }
+          }
+          @keyframes pulseGlow {
+            0%, 100% { opacity: 0.4; }
+            50% { opacity: 1; }
+          }
+          .splash-ring {
+            width: 56px; height: 56px; border-radius: 50%;
+            border: 2px solid var(--border);
+            border-top-color: var(--text-display);
+            animation: spinRing 1s linear infinite;
+          }
+          .splash-dots {
+            display: flex; gap: 6px; align-items: center;
+          }
+          .splash-dot {
+            width: 4px; height: 4px; border-radius: 50%;
+            background: var(--text-secondary);
+            animation: pulseGlow 1.4s ease-in-out infinite;
+          }
+          .splash-dot:nth-child(2) { animation-delay: 0.2s; }
+          .splash-dot:nth-child(3) { animation-delay: 0.4s; }
+        `}</style>
+
+        {/* Spinning ring */}
+        <div class="splash-ring" />
+
+        {/* Title */}
+        <div style={{
+          fontFamily: 'var(--font-display)', fontSize: 'var(--heading)',
+          color: 'var(--text-display)', letterSpacing: 'var(--ls-heading)',
+          animation: 'fadeInUp 0.5s ease-out both',
+        }}>
+          VOICEBRIDGE
+        </div>
+
+        {/* Status + animated dots */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)', animation: 'fadeInUp 0.5s ease-out 0.15s both' }}>
+          <span class="mono" style={{ color: 'var(--text-disabled)', fontSize: 'var(--caption)' }}>
+            LOADING
+          </span>
+          <div class="splash-dots">
+            <div class="splash-dot" />
+            <div class="splash-dot" />
+            <div class="splash-dot" />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // Show onboarding if not completed
   if (state.view === 'onboarding' && !state.onboardingComplete) {
     return <OnboardingView onComplete={handleOnboardingComplete} />;
@@ -860,6 +929,7 @@ function App() {
       flexDirection: 'column',
       padding: 'var(--space-lg)',
       gap: 'var(--space-md)',
+      overflow: 'auto',
     }}>
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

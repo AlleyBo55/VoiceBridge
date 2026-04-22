@@ -38,8 +38,8 @@ function createMainWindow(): BrowserWindow {
   const isDev = process.env['NODE_ENV'] === 'development';
 
   const win = new BrowserWindow({
-    width: isDev ? 800 : 360,
-    height: isDev ? 600 : 480,
+    width: isDev ? 900 : 360,
+    height: isDev ? 750 : 480,
     show: false,
     frame: isDev,
     resizable: isDev,
