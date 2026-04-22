@@ -185,7 +185,15 @@ function registerIPCHandlers(): void {
     return driverInstaller.checkInstalled();
   });
   handleInvoke('driver:install', async () => {
-    return driverInstaller.install();
+    // Stream progress to renderer
+    driverInstaller.onProgress = (percent, message) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('driver:install-progress', { percent, message });
+      }
+    };
+    const result = await driverInstaller.install();
+    driverInstaller.onProgress = null;
+    return result;
   });
   handleInvoke('driver:uninstall', async () => {
     return driverInstaller.uninstall();

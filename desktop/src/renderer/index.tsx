@@ -759,6 +759,9 @@ function App() {
   // 'translated' when TTS is playing
   const [eqMode, setEqMode] = useState<'original' | 'translated' | 'idle'>('idle');
   const [installError, setInstallError] = useState('');
+  const [installing, setInstalling] = useState(false);
+  const [installPercent, setInstallPercent] = useState(0);
+  const [installMessage, setInstallMessage] = useState('');
 
   // Load initial settings
   useEffect(() => {
@@ -820,6 +823,11 @@ function App() {
         } else if (s.stage === 'CAPTURED') {
           setEqMode('original');
         }
+      }),
+      vb.on('driver:install-progress', (data: unknown) => {
+        const d = data as { percent: number; message: string };
+        setInstallPercent(d.percent);
+        setInstallMessage(d.message);
       }),
     ];
     return () => unsubs.forEach(fn => fn());
@@ -988,24 +996,53 @@ function App() {
       {!state.driverInstalled && (
         <div class="card" style={{ textAlign: 'center' }}>
           <div class="label" style={{ marginBottom: 'var(--space-sm)' }}>VIRTUAL MIC NOT INSTALLED</div>
-          <div style={{ color: 'var(--text-secondary)', fontSize: 'var(--caption)', marginBottom: 'var(--space-sm)' }}>
-            Installs a virtual audio device on your system
-          </div>
-          <button class="btn-primary" id="install-driver-btn" onClick={async (e) => {
-            const btn = e.currentTarget as HTMLButtonElement;
-            btn.textContent = 'INSTALLING...';
-            btn.disabled = true;
-            const result = await vb.installDriver();
-            if (result.success) {
-              dispatch({ type: 'SET_DRIVER', installed: true });
-            } else {
-              btn.textContent = 'INSTALL FAILED — RETRY';
-              btn.disabled = false;
-              setInstallError(result.error ?? 'Unknown error');
-            }
-          }}>
-            INSTALL DRIVER
-          </button>
+
+          {!installing ? (
+            <>
+              <div style={{ color: 'var(--text-secondary)', fontSize: 'var(--caption)', marginBottom: 'var(--space-sm)' }}>
+                Installs a virtual audio device on your system
+              </div>
+              <button class="btn-primary" onClick={async () => {
+                setInstalling(true);
+                setInstallError('');
+                setInstallPercent(0);
+                setInstallMessage('Starting...');
+                const result = await vb.installDriver();
+                if (result.success) {
+                  setInstallPercent(100);
+                  setInstallMessage('Done!');
+                  dispatch({ type: 'SET_DRIVER', installed: true });
+                } else {
+                  setInstalling(false);
+                  setInstallError(result.error ?? 'Unknown error');
+                }
+              }} style={{ width: '100%' }}>
+                INSTALL DRIVER
+              </button>
+            </>
+          ) : (
+            <>
+              {/* Progress bar */}
+              <div style={{ width: '100%', height: 6, background: 'var(--border)', borderRadius: 3, overflow: 'hidden', marginBottom: 'var(--space-sm)' }}>
+                <div style={{
+                  height: '100%',
+                  width: `${installPercent}%`,
+                  background: installPercent >= 100 ? 'var(--success)' : 'var(--text-display)',
+                  borderRadius: 3,
+                  transition: 'width 0.5s ease-out',
+                }} />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span class="mono" style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                  {installMessage}
+                </span>
+                <span class="mono" style={{ fontSize: '11px', color: 'var(--text-display)' }}>
+                  {installPercent}%
+                </span>
+              </div>
+            </>
+          )}
+
           {installError && (
             <div class="mono" style={{ color: 'var(--accent)', fontSize: '11px', marginTop: 'var(--space-sm)', wordBreak: 'break-word', whiteSpace: 'pre-wrap', textAlign: 'left', lineHeight: 1.5, background: 'var(--surface)', padding: 'var(--space-sm)', borderRadius: 'var(--radius-md)' }}>
               {installError}

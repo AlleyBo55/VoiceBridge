@@ -24,6 +24,9 @@ export class DriverInstaller {
   #installed = false;
   #driverName = '';
 
+  /** Called during install with progress updates. Set by the caller. */
+  onProgress: ((percent: number, message: string) => void) | null = null;
+
   constructor(nativeAddon: NativeAudioAddon, settings: DesktopSettingsStore, debugLog: DesktopDebugLog) {
     this.#nativeAddon = nativeAddon;
     this.#settings = settings;
@@ -177,11 +180,14 @@ export class DriverInstaller {
   // ── macOS Install ─────────────────────────────────────────
 
   async #installMacOS(): Promise<DriverInstallResult> {
+    const p = (pct: number, msg: string) => this.onProgress?.(pct, msg);
+
     // 1. Check Homebrew
-    let brewPath: string;
+    p(5, 'Checking for Homebrew...');
     try {
-      brewPath = execSync('which brew', { encoding: 'utf8', timeout: 3000 }).trim();
+      execSync('which brew', { encoding: 'utf8', timeout: 3000 });
     } catch {
+      p(0, 'Homebrew not found');
       return {
         success: false,
         error: [
@@ -198,66 +204,133 @@ export class DriverInstaller {
       };
     }
 
-    // 2. Install BlackHole
+    // 2. Check if already installed
+    p(10, 'Checking existing installation...');
+    try {
+      const check = execSync('brew list blackhole-2ch 2>/dev/null', { encoding: 'utf8', timeout: 5000 });
+      if (check.trim().length > 0) {
+        p(100, 'Already installed');
+        return { success: true };
+      }
+    } catch { /* not installed — continue */ }
+
+    // 3. Install via brew with progress tracking
+    p(15, 'Downloading BlackHole 2ch...');
+    this.#debugLog.log('info', 'audio', 'Running: brew install blackhole-2ch');
+
     return new Promise((resolve) => {
-      this.#debugLog.log('info', 'audio', 'Running: brew install blackhole-2ch');
+      const { spawn: spawnProcess } = require('child_process') as typeof import('child_process');
+      const child = spawnProcess('brew', ['install', 'blackhole-2ch'], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 120000,
+      });
 
-      exec('brew install blackhole-2ch 2>&1', { timeout: 180000 }, (error, output) => {
-        if (error) {
-          const out = output ?? error.message;
+      let output = '';
+      let lastProgress = 15;
+      const startTime = Date.now();
 
-          if (out.includes('already installed')) {
-            resolve({ success: true });
-            return;
-          }
+      // Tick progress based on elapsed time (brew doesn't give %)
+      const progressTimer = setInterval(() => {
+        const elapsed = Date.now() - startTime;
+        // Estimate: downloading ~30s, installing ~30s
+        if (elapsed < 30000) {
+          lastProgress = Math.min(50, 15 + Math.floor((elapsed / 30000) * 35));
+          p(lastProgress, 'Downloading BlackHole 2ch...');
+        } else if (elapsed < 60000) {
+          lastProgress = Math.min(80, 50 + Math.floor(((elapsed - 30000) / 30000) * 30));
+          p(lastProgress, 'Installing audio driver...');
+        } else if (elapsed < 90000) {
+          lastProgress = Math.min(90, 80 + Math.floor(((elapsed - 60000) / 30000) * 10));
+          p(lastProgress, 'Configuring CoreAudio...');
+        } else {
+          p(90, 'Still working... this can take a while');
+        }
+      }, 1000);
 
-          if (out.includes('Permission denied') || out.includes('EPERM')) {
-            resolve({
-              success: false,
-              error: [
-                'Permission denied during install.',
-                '',
-                'To fix this:',
-                '1. Open Terminal',
-                '2. Run: brew install blackhole-2ch',
-                '3. If prompted, enter your password',
-                '4. Restart VoiceBridge',
-              ].join('\n'),
-            });
-            return;
-          }
+      child.stdout?.on('data', (data: Buffer) => { output += data.toString(); });
+      child.stderr?.on('data', (data: Buffer) => { output += data.toString(); });
 
-          if (out.includes('Xcode') || out.includes('CLT')) {
-            resolve({
-              success: false,
-              error: [
-                'Xcode Command Line Tools required.',
-                '',
-                'To fix this:',
-                '1. Open Terminal',
-                '2. Run: xcode-select --install',
-                '3. Wait for installation to complete',
-                '4. Run: brew install blackhole-2ch',
-                '5. Restart VoiceBridge',
-              ].join('\n'),
-            });
-            return;
-          }
+      child.on('error', (err: Error) => {
+        clearInterval(progressTimer);
+        if (err.message.includes('ETIMEDOUT') || err.message.includes('timeout')) {
+          p(0, 'Timed out');
+          resolve({
+            success: false,
+            error: [
+              'Installation timed out after 2 minutes.',
+              '',
+              'This usually means a slow network connection.',
+              'Try manually in Terminal:',
+              '  brew install blackhole-2ch',
+              '',
+              'Then restart VoiceBridge.',
+            ].join('\n'),
+          });
+        } else {
+          p(0, 'Error');
+          resolve({ success: false, error: `Install error: ${err.message}` });
+        }
+      });
 
-          if (out.includes('Network') || out.includes('curl') || out.includes('Could not resolve')) {
-            resolve({
-              success: false,
-              error: [
-                'Network error — cannot reach Homebrew servers.',
-                '',
-                'Check your internet connection and try again.',
-                'Or install BlackHole manually: https://existential.audio/blackhole/',
-              ].join('\n'),
-            });
-            return;
-          }
+      child.on('close', (code: number | null) => {
+        clearInterval(progressTimer);
 
-          // Generic fallback
+        if (code === 0 || output.includes('already installed')) {
+          p(95, 'Verifying installation...');
+
+          // Restart coreaudiod to pick up the new device
+          try {
+            execSync('sudo launchctl kickstart -kp system/com.apple.audio.coreaudiod 2>/dev/null || true', { timeout: 5000 });
+          } catch { /* may need sudo */ }
+
+          p(100, 'Installed successfully');
+          resolve({ success: true });
+          return;
+        }
+
+        // Parse error
+        if (output.includes('Permission denied') || output.includes('EPERM')) {
+          p(0, 'Permission denied');
+          resolve({
+            success: false,
+            error: [
+              'Permission denied during install.',
+              '',
+              'To fix this:',
+              '1. Open Terminal',
+              '2. Run: brew install blackhole-2ch',
+              '3. If prompted, enter your password',
+              '4. Restart VoiceBridge',
+            ].join('\n'),
+          });
+        } else if (output.includes('Xcode') || output.includes('CLT')) {
+          p(0, 'Xcode CLT required');
+          resolve({
+            success: false,
+            error: [
+              'Xcode Command Line Tools required.',
+              '',
+              'To fix this:',
+              '1. Open Terminal',
+              '2. Run: xcode-select --install',
+              '3. Wait for installation to complete',
+              '4. Run: brew install blackhole-2ch',
+              '5. Restart VoiceBridge',
+            ].join('\n'),
+          });
+        } else if (output.includes('Network') || output.includes('curl') || output.includes('Could not resolve')) {
+          p(0, 'Network error');
+          resolve({
+            success: false,
+            error: [
+              'Network error — cannot reach Homebrew servers.',
+              '',
+              'Check your internet connection and try again.',
+              'Or install BlackHole manually: https://existential.audio/blackhole/',
+            ].join('\n'),
+          });
+        } else {
+          p(0, 'Failed');
           resolve({
             success: false,
             error: [
@@ -266,20 +339,10 @@ export class DriverInstaller {
               'Try manually in Terminal:',
               '  brew install blackhole-2ch',
               '',
-              `Error: ${out.slice(0, 200)}`,
+              `Error: ${output.slice(0, 300)}`,
             ].join('\n'),
           });
-          return;
         }
-
-        // Success — restart coreaudiod to pick up the new device
-        try {
-          execSync('sudo launchctl kickstart -kp system/com.apple.audio.coreaudiod 2>/dev/null || true', { timeout: 5000 });
-        } catch {
-          // May need sudo — device might appear after next reboot or audio restart
-        }
-
-        resolve({ success: true });
       });
     });
   }
@@ -287,7 +350,7 @@ export class DriverInstaller {
   // ── Linux Install ─────────────────────────────────────────
 
   async #installLinux(): Promise<DriverInstallResult> {
-    // Detect audio system: PipeWire or PulseAudio
+    const p = (pct: number, msg: string) => this.onProgress?.(pct, msg);
     const hasPipeWire = this.#commandExists('pw-cli');
     const hasPulseAudio = this.#commandExists('pactl');
 
