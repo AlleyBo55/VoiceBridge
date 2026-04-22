@@ -81,48 +81,43 @@ Five stages. Under 1.5 seconds. Works everywhere.
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Electron Desktop App                          │
-│                                                                  │
-│  ┌──────────────────────┐    ┌──────────────────────────────┐   │
-│  │   Main Process        │    │   Renderer Process (Preact)   │   │
-│  │   (Node.js + N-API)   │    │   (Nothing Design System)     │   │
-│  │                        │    │                                │   │
-│  │  Pipeline Orchestrator │◄──►│  Main Window (360×480)        │   │
-│  │  Audio Router          │ IPC│  System Tray                   │   │
-│  │  Native Audio Addon    │    │  Settings View                 │   │
-│  │  Settings Store        │    │  Debug Log View                │   │
-│  │  Driver Installer      │    │                                │   │
-│  └──────────┬─────────────┘    └──────────────────────────────┘   │
-│             │                                                      │
-│             ▼                                                      │
-│  ┌──────────────────────┐                                          │
-│  │   Native Audio Addon  │                                          │
-│  │   (napi-rs / Rust)    │                                          │
-│  │                        │                                          │
-│  │  Real Mic Capture      │                                          │
-│  │  Virtual Mic Write     │                                          │
-│  │  Device Enumeration    │                                          │
-│  │  Resampling            │                                          │
-│  └──────────┬─────────────┘                                          │
-└─────────────┼────────────────────────────────────────────────────────┘
-              │
-              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    OS Audio Layer                                 │
-│                                                                  │
-│  ┌──────────────┐    ┌──────────────────────┐                    │
-│  │ Real Mic      │    │ Virtual Mic Driver    │                    │
-│  │ (hardware)    │    │ "VoiceBridge Mic"     │                    │
-│  └──────────────┘    └──────────┬───────────┘                    │
-│                                  │                                │
-│                                  ▼                                │
-│                    ┌──────────────────────┐                       │
-│                    │ Any Meeting App       │                       │
-│                    │ Teams / Zoom / Meet   │                       │
-│                    │ Discord / Slack / etc  │                       │
-│                    └──────────────────────┘                       │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│                 Electron Desktop App                  │
+│                                                      │
+│  ┌─────────────────┐   ┌─────────────────────────┐  │
+│  │  Main Process    │   │  Renderer (Preact)       │  │
+│  │  Node.js + N-API │◄─►│  Nothing Design System   │  │
+│  │                  │IPC│                           │  │
+│  │  • Pipeline      │   │  • Main Window (360×480) │  │
+│  │  • Audio Router  │   │  • System Tray           │  │
+│  │  • Settings      │   │  • Settings View         │  │
+│  │  • Driver Mgmt   │   │  • Debug Log             │  │
+│  └────────┬─────────┘   └─────────────────────────┘  │
+│           │                                           │
+│  ┌────────▼─────────┐                                 │
+│  │  Native Addon     │                                 │
+│  │  (napi-rs / Rust) │                                 │
+│  │                    │                                 │
+│  │  • Mic Capture     │                                 │
+│  │  • Virtual Mic     │                                 │
+│  │  • Resampling      │                                 │
+│  └────────┬───────────┘                                 │
+└───────────┼─────────────────────────────────────────────┘
+            │
+┌───────────▼─────────────────────────────────────────────┐
+│                    OS Audio Layer                        │
+│                                                         │
+│  ┌────────────┐   ┌─────────────────────┐               │
+│  │ Real Mic    │   │ "VoiceBridge Mic"   │               │
+│  │ (hardware)  │   │ (virtual driver)    │               │
+│  └────────────┘   └──────────┬──────────┘               │
+│                              │                           │
+│                   ┌──────────▼──────────┐               │
+│                   │  Any Meeting App     │               │
+│                   │  Teams / Zoom / Meet │               │
+│                   │  Discord / Slack     │               │
+│                   └─────────────────────┘               │
+└─────────────────────────────────────────────────────────┘
 ```
 
 ### Virtual Mic Driver (Per OS)
@@ -276,6 +271,12 @@ npm run typecheck    # TypeScript strict check
 | Phase 1 | Chrome Extension — core pipeline, UI, onboarding | ✓ Complete |
 | Phase 2 | Pipeline hardening — orchestrator, state machines, degradation | ✓ Complete |
 | Phase 3 | Desktop app rewrite — virtual mic driver, Electron, native audio | 🔄 In Progress |
+
+---
+
+## License
+
+MIT — use it, fork it, ship it.
 
 ---
 
