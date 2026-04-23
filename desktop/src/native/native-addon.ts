@@ -222,11 +222,13 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
       const mp3Path = join(tmpdir(), `vb-tts-${Date.now()}.mp3`);
       writeFileSync(mp3Path, audio);
 
-      // First: convert MP3 to volume-boosted WAV (ffmpeg normalizes + amplifies)
+      // Convert MP3 → volume-boosted WAV, then play to BlackHole only.
+      // User hears audio through the meeting app, not direct speaker playback.
+      // This avoids the reverb caused by dual playback with timing offset.
       const wavPath = mp3Path.replace('.mp3', '.wav');
       const convert = spawn('ffmpeg', [
         '-y', '-i', mp3Path,
-        '-af', 'loudnorm=I=-14:TP=-1:LRA=11,volume=2.0',
+        '-af', 'volume=3.0',
         '-ar', '44100', '-ac', '1',
         wavPath,
       ], { stdio: ['ignore', 'ignore', 'pipe'] });
@@ -257,15 +259,12 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
         bhProc.on('close', (code) => {
           console.log(`[Audio] ffmpeg→BlackHole exited code=${code}`);
           if (code !== 0) console.error(`[Audio] ffmpeg stderr: ${bhErr.slice(-300)}`);
+          try { unlinkSync(wavPath); } catch(_e2) {}
         });
         bhProc.on('error', (err) => {
           console.error(`[Audio] ffmpeg spawn error: ${err.message}`);
+          try { unlinkSync(wavPath); } catch(_e3) {}
         });
-
-        // Play boosted WAV through speakers in parallel
-        const speaker = spawn('afplay', [wavPath], { stdio: 'ignore' });
-        speaker.on('close', () => { try { unlinkSync(wavPath); } catch(_e2) {} });
-        speaker.on('error', () => { try { unlinkSync(wavPath); } catch(_e3) {} });
       });
       convert.on('error', () => {
         try { unlinkSync(mp3Path); } catch(_e) {}
@@ -276,7 +275,7 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
 
       const proc = spawn('ffmpeg', [
         '-y', '-i', mp3Path,
-        '-af', 'loudnorm=I=-14:TP=-1:LRA=11,volume=2.0',
+        '-af', 'volume=3.0',
         '-f', 'pulse', 'voicebridge',
       ], { stdio: ['ignore', 'ignore', 'ignore'] });
       proc.on('close', () => { try { unlinkSync(mp3Path); } catch(_e) {} });
