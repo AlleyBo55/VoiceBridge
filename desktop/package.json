@@ -50,7 +50,12 @@
         }
       ],
       "hardenedRuntime": true,
-      "gatekeeperAssess": false
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "VoiceBridge needs microphone access to capture your voice for real-time translation."
+      }
     },
     "dmg": {
       "contents": [

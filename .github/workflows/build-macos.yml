@@ -47,22 +47,31 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v${VERSION}-macos" >> "$GITHUB_OUTPUT"
 
-      - name: Package .dmg
+      - name: Package .dmg (x64 + arm64)
         working-directory: desktop
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run dist:mac
 
-      - name: Rename artifact
+      - name: Rename artifacts
         run: |
-          DMG=$(ls desktop/release/*.dmg | head -1)
-          cp "$DMG" "desktop/release/VoiceBridge-${{ steps.version.outputs.version }}-macOS.dmg"
+          VERSION=${{ steps.version.outputs.version }}
+          # Rename both DMGs with clear architecture labels
+          for dmg in desktop/release/*.dmg; do
+            base=$(basename "$dmg")
+            if echo "$base" | grep -q "arm64"; then
+              cp "$dmg" "desktop/release/VoiceBridge-${VERSION}-macOS-arm64.dmg"
+            else
+              cp "$dmg" "desktop/release/VoiceBridge-${VERSION}-macOS-x64.dmg"
+            fi
+          done
 
-      - name: Upload artifact
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: VoiceBridge-macOS
-          path: desktop/release/VoiceBridge-${{ steps.version.outputs.version }}-macOS.dmg
+          path: |
+            desktop/release/VoiceBridge-*-macOS-*.dmg
 
       - name: Create GitHub Release
         if: github.ref == 'refs/heads/master'
@@ -73,7 +82,12 @@ jobs:
           body: |
             ## macOS Installer
 
-            Download `VoiceBridge-${{ steps.version.outputs.version }}-macOS.dmg`, open it, and drag VoiceBridge to Applications.
+            | Chip | Download |
+            |------|----------|
+            | Apple Silicon (M1/M2/M3/M4) | `VoiceBridge-${{ steps.version.outputs.version }}-macOS-arm64.dmg` |
+            | Intel | `VoiceBridge-${{ steps.version.outputs.version }}-macOS-x64.dmg` |
+
+            Open the DMG and drag VoiceBridge to Applications.
 
             Requires macOS 12+ and [BlackHole 2ch](https://existential.audio/blackhole/) for virtual mic.
 
@@ -88,7 +102,9 @@ jobs:
             Then open VoiceBridge normally.
           draft: false
           prerelease: false
-          files: desktop/release/VoiceBridge-${{ steps.version.outputs.version }}-macOS.dmg
+          files: |
+            desktop/release/VoiceBridge-${{ steps.version.outputs.version }}-macOS-arm64.dmg
+            desktop/release/VoiceBridge-${{ steps.version.outputs.version }}-macOS-x64.dmg
 
       - name: Update latest-macos tag
         if: github.ref == 'refs/heads/master'
