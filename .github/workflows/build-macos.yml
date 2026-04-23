@@ -76,6 +76,16 @@ jobs:
             Download `VoiceBridge-${{ steps.version.outputs.version }}-macOS.dmg`, open it, and drag VoiceBridge to Applications.
 
             Requires macOS 12+ and [BlackHole 2ch](https://existential.audio/blackhole/) for virtual mic.
+
+            ### First Launch
+
+            Since VoiceBridge is not code-signed yet, macOS Gatekeeper will block it. After dragging to Applications, open Terminal and run:
+
+            ```
+            xattr -cr /Applications/VoiceBridge.app
+            ```
+
+            Then open VoiceBridge normally.
           draft: false
           prerelease: false
           files: desktop/release/VoiceBridge-${{ steps.version.outputs.version }}-macOS.dmg
