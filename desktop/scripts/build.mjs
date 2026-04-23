@@ -25,12 +25,12 @@ async function buildMain() {
   await build({
     ...commonOptions,
     entryPoints: [resolve(root, 'src/main/main.ts')],
-    outfile: resolve(root, 'dist/main/main.js'),
+    outfile: resolve(root, 'dist/main/main.cjs'),
     define: {
       'process.env.NODE_ENV': '"production"',
     },
   });
-  console.log('[build] Main process → dist/main/main.js');
+  console.log('[build] Main process → dist/main/main.cjs');
 }
 
 async function buildPreload() {

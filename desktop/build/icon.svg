@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" fill="none">
+  <rect width="1024" height="1024" rx="220" fill="#000000"/>
+
+  <!-- Dot grid background — subtle -->
+  <defs>
+    <pattern id="dots" x="0" y="0" width="32" height="32" patternUnits="userSpaceOnUse">
+      <circle cx="16" cy="16" r="1.5" fill="#222222"/>
+    </pattern>
+  </defs>
+  <rect x="80" y="80" width="864" height="864" rx="140" fill="url(#dots)"/>
+
+  <!-- Sound wave arcs — left side (input) -->
+  <path d="M340 390 Q280 512 340 634" stroke="#444444" stroke-width="12" stroke-linecap="round" fill="none"/>
+  <path d="M296 340 Q210 512 296 684" stroke="#333333" stroke-width="10" stroke-linecap="round" fill="none"/>
+
+  <!-- Sound wave arcs — right side (output) -->
+  <path d="M684 390 Q744 512 684 634" stroke="#444444" stroke-width="12" stroke-linecap="round" fill="none"/>
+  <path d="M728 340 Q814 512 728 684" stroke="#333333" stroke-width="10" stroke-linecap="round" fill="none"/>
+
+  <!-- Central bridge element — two vertical bars with connecting bridge -->
+  <rect x="432" y="300" width="40" height="424" rx="20" fill="#E8E8E8"/>
+  <rect x="552" y="300" width="40" height="424" rx="20" fill="#E8E8E8"/>
+
+  <!-- Bridge connector -->
+  <rect x="452" y="472" width="120" height="40" rx="20" fill="#E8E8E8"/>
+
+  <!-- Accent dot — single red dot, the "active" indicator -->
+  <circle cx="512" cy="492" r="10" fill="#D71921"/>
+
+  <!-- V and B letterforms — subtle, at bottom -->
+  <text x="422" y="820" font-family="monospace" font-size="64" font-weight="700" letter-spacing="0.08em" fill="#666666">VB</text>
+</svg>

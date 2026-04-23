@@ -12,13 +12,13 @@
     "name": "AlleyBo55",
     "email": "alleybo55@users.noreply.github.com"
   },
-  "main": "dist/main/main.js",
+  "main": "dist/main/main.cjs",
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "build": "npm run typecheck && node scripts/build.mjs && vite build",
     "build:main": "node scripts/build.mjs",
     "build:renderer": "vite build",
-    "start": "electron dist/main/main.js",
+    "start": "electron dist/main/main.cjs",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
     "dist:mac": "electron-builder --mac --publish never",
