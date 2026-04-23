@@ -1204,14 +1204,12 @@ function App() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space' && !e.repeat && state.sessionActive) {
         e.preventDefault();
-        setPttActive(true);
         vb.pttPress();
       }
     };
     const handleKeyUp = (e: KeyboardEvent) => {
       if (e.code === 'Space' && state.sessionActive) {
         e.preventDefault();
-        setPttActive(false);
         vb.pttRelease();
       }
     };
@@ -1399,26 +1397,26 @@ function App() {
       {state.sessionActive && (
         <div style={{ textAlign: 'center' }}>
           <button
-            class={`ptt-btn${pttActive ? ' ptt-btn--active' : ''}`}
-            onMouseDown={() => { setPttActive(true); vb.pttPress(); }}
-            onMouseUp={() => { setPttActive(false); vb.pttRelease(); }}
-            onMouseLeave={() => { if (pttActive) { setPttActive(false); vb.pttRelease(); } }}
-            onTouchStart={() => { setPttActive(true); vb.pttPress(); }}
-            onTouchEnd={() => { setPttActive(false); vb.pttRelease(); }}
-            aria-label={pttActive ? 'Listening' : 'Hold to talk'}
+            class="btn-primary"
+            style={{
+              width: '100%',
+              padding: '16px',
+              fontSize: 'var(--body-sm)',
+              background: 'var(--surface-raised)',
+              border: '2px solid var(--border-visible)',
+              userSelect: 'none',
+              touchAction: 'none',
+            }}
+            onMouseDown={() => vb.pttPress()}
+            onMouseUp={() => vb.pttRelease()}
+            onMouseLeave={() => vb.pttRelease()}
+            onTouchStart={() => vb.pttPress()}
+            onTouchEnd={() => vb.pttRelease()}
           >
-            {pttActive ? (
-              <div class="ptt-spectrum">
-                {Array.from({ length: 5 }, (_, i) => (
-                  <div key={i} class="ptt-spectrum-bar" style={{ animationDelay: `${i * 0.1}s` }} />
-                ))}
-              </div>
-            ) : (
-              <span class="ptt-label">HOLD TO TALK</span>
-            )}
+            HOLD TO TALK
           </button>
           <div class="mono" style={{ fontSize: '10px', color: 'var(--text-disabled)', marginTop: '4px' }}>
-            {pttActive ? 'LISTENING...' : 'Hold button or press SPACE to speak'}
+            Hold button or press SPACE to speak
           </div>
         </div>
       )}

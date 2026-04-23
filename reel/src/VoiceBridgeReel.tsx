@@ -145,13 +145,13 @@ const Waveform: React.FC<{ color: string; active: boolean; height?: number }> = 
 // ── Language Data ────────────────────────────────────────────
 
 const DEMO_LANGUAGES = [
-  { label: 'ENGLISH', text: '"Hello darling, daddy loves you."', color: '#5B9BF6', frames: 96 },
-  { label: 'KOREAN', text: '"안녕 사랑아, 아빠가 사랑해."', color: COLORS.accent, frames: 156 },
-  { label: 'JAPANESE', text: '"パパはいつも大好きだよ。"', color: '#C084FC', frames: 96 },
-  { label: 'CHINESE', text: '"爸爸永远爱你。"', color: '#4ADE80', frames: 96 },
+  { label: 'ENGLISH', text: '"Hello darling, daddy loves you."', color: '#5B9BF6' },
+  { label: 'KOREAN', text: '"안녕 사랑아, 아빠가 사랑해."', color: COLORS.accent },
+  { label: 'JAPANESE', text: '"パパはいつも大好きだよ。"', color: '#C084FC' },
+  { label: 'CHINESE', text: '"爸爸永远爱你。"', color: '#4ADE80' },
 ] as const;
 
-const LANG_DURATION = 96; // fallback, not used for cycling anymore
+const LANG_DURATION = 93; // 3.1s
 
 // ── Main Composition ────────────────────────────────────────
 
@@ -159,9 +159,8 @@ export const VoiceBridgeReel: React.FC = () => {
   const frame = useCurrentFrame();
 
   // Scene timing
-  const TOTAL_LANG_FRAMES = DEMO_LANGUAGES.reduce((sum, l) => sum + l.frames, 0); // 444
-  const S3 = 255;
-  const S3_DUR = TOTAL_LANG_FRAMES + 60;
+  const S3 = 255; // after longer scene 2
+  const S3_DUR = LANG_DURATION * DEMO_LANGUAGES.length + 60;
   const S4 = S3 + S3_DUR;
   const S5 = S4 + 180;
 
@@ -249,22 +248,13 @@ export const VoiceBridgeReel: React.FC = () => {
               const outputStart = 60;
               const localScene = frame - S3 - outputStart;
               if (localScene < 0) return null;
-
-              // Find which language we're on based on cumulative frames
-              let accumulated = 0;
-              let idx = 0;
-              for (let i = 0; i < DEMO_LANGUAGES.length; i++) {
-                if (localScene < accumulated + DEMO_LANGUAGES[i].frames) { idx = i; break; }
-                accumulated += DEMO_LANGUAGES[i].frames;
-                if (i === DEMO_LANGUAGES.length - 1) idx = i;
-              }
-              const lf = localScene - accumulated;
+              const idx = Math.min(Math.floor(localScene / LANG_DURATION), DEMO_LANGUAGES.length - 1);
+              const lf = localScene - idx * LANG_DURATION;
               const lang = DEMO_LANGUAGES[idx];
               if (!lang) return null;
-              const dur = lang.frames;
 
               const fadeIn = interpolate(lf, [0, 12], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
-              const fadeOut = interpolate(lf, [dur - 12, dur], [1, 0], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+              const fadeOut = interpolate(lf, [LANG_DURATION - 12, LANG_DURATION], [1, 0], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
               const y = interpolate(lf, [0, 12], [24, 0], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
               const textScale = interpolate(lf, [0, 15], [0.9, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
 
@@ -279,7 +269,7 @@ export const VoiceBridgeReel: React.FC = () => {
                   }}>
                     OUTPUT — {lang.label}
                   </div>
-                  <Waveform color={lang.color} active={lf > 15 && lf < dur - 10} />
+                  <Waveform color={lang.color} active={lf > 15 && lf < LANG_DURATION - 10} />
                   <div style={{
                     fontFamily: FONTS.body, fontSize: 46, color: lang.color,
                     marginTop: 20, fontWeight: 500, minHeight: 60,
@@ -304,15 +294,7 @@ export const VoiceBridgeReel: React.FC = () => {
           <div style={{ display: 'flex', gap: 12, marginTop: 4 }}>
             {DEMO_LANGUAGES.map((lang, i) => {
               const localScene = frame - S3 - 60;
-              let accumulated2 = 0;
-              let activeIdx = -1;
-              if (localScene >= 0) {
-                for (let j = 0; j < DEMO_LANGUAGES.length; j++) {
-                  if (localScene < accumulated2 + DEMO_LANGUAGES[j].frames) { activeIdx = j; break; }
-                  accumulated2 += DEMO_LANGUAGES[j].frames;
-                  if (j === DEMO_LANGUAGES.length - 1) activeIdx = j;
-                }
-              }
+              const activeIdx = localScene < 0 ? -1 : Math.min(Math.floor(localScene / LANG_DURATION), DEMO_LANGUAGES.length - 1);
               return (
                 <div key={lang.label} style={{
                   width: i === activeIdx ? 32 : 12, height: 12, borderRadius: 6,
