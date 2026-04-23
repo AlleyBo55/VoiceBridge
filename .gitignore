@@ -5,3 +5,7 @@ dist/
 *.local
 .env
 secrets.txt
+
+# Remotion render output
+reel/out/
+reel/node_modules/
