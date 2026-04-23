@@ -631,7 +631,7 @@ export class DesktopPipeline {
 
     try {
       const response = await fetch(
-        `https://api.elevenlabs.io/v1/text-to-speech/${this.#voiceId}?output_format=mp3_44100_128`,
+        `https://api.elevenlabs.io/v1/text-to-speech/${this.#voiceId}?output_format=mp3_44100_192`,
         {
           method: 'POST',
           headers: {
@@ -640,11 +640,12 @@ export class DesktopPipeline {
           },
           body: JSON.stringify({
             text,
-            model_id: 'eleven_flash_v2_5',
+            model_id: 'eleven_multilingual_v2',
             voice_settings: {
               stability: this.#voiceStability,
               similarity_boost: this.#voiceSimilarityBoost,
               style: this.#voiceStyle,
+              use_speaker_boost: true,
             },
           }),
           signal: AbortSignal.timeout(15000),
