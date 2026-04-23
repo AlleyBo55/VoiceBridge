@@ -18,15 +18,8 @@
 
 ---
 
-## Demo
-
-> Upload your demo video to a GitHub Issue, then replace this link with the URL GitHub gives you.
-
-<!-- Replace the URL below after uploading demo.mov via GitHub Issues -->
-<!-- https://github.com/user-attachments/assets/YOUR-VIDEO-ID -->
-
 <p align="center">
-  <em>Indonesian → Korean, real-time, in the speaker's own cloned voice.</em>
+  <em>English → Japanese → Indonesian → Russian → Korean , real-time, in the speaker's own cloned voice.</em>
 </p>
 
 ---
@@ -41,6 +34,13 @@
   <img src="public/screenshots/3.png" width="360" alt="Main View — Translation Active" />
   <img src="public/screenshots/4.png" width="360" alt="Settings" />
 </p>
+
+---
+
+## Demo
+
+[https://github.com/user-attachments/assets/demo.mov
+](https://github.com/user-attachments/assets/a6d14b28-c75f-4267-9a57-6776f1dd8cb2)
 
 ---
 
