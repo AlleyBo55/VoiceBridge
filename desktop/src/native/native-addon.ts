@@ -135,11 +135,10 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
       console.log(`[Audio] Writing ${pcm.length} bytes to virtual mic (chunk #${this.#outputChunkCount})`);
     }
 
-    // Write as temp WAV and play with a short-lived ffmpeg → BlackHole
-    // No persistent pipe = no buffering = immediate playback
+    // Write to BlackHole / virtual mic only — meeting app picks it up.
+    // Speaker playback is intentionally disabled to prevent double audio:
+    // the user hears the translation through the meeting app's audio output.
     this.#playToBlackHole(pcm);
-    // Also play through speakers via afplay
-    this.#playThroughSpeaker(pcm);
   }
 
   isDriverInstalled(): boolean { return false; }
@@ -244,7 +243,9 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
   // Speaker playback — plays TTS audio through default speakers using afplay (macOS built-in)
   #speakerPlayCount = 0;
 
-  /** Write raw PCM to a temp WAV file and play it with afplay (immediate, no buffering) */
+  /** Write raw PCM to a temp WAV file and play it with afplay (immediate, no buffering).
+   * Currently unused — kept for future "monitor" toggle to hear translations locally. */
+  // @ts-expect-error Retained for future speaker monitor feature
   #playThroughSpeaker(pcm: Buffer): void {
     if (process.platform !== 'darwin') return;
 
