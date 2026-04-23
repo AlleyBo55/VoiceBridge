@@ -15,19 +15,19 @@ import { AutoStartManager } from './auto-start.js';
 import { LanguageService } from './language-service.js';
 import { PanicStop } from './panic-stop.js';
 import { DesktopVoiceProfile } from './desktop-voice-profile.js';
-import { handleInvoke, sendToRenderer } from './electron-ipc.js';
+import { handleInvoke } from './electron-ipc.js';
 
 // ── State ───────────────────────────────────────────────────
 
 let mainWindow: BrowserWindow | null = null;
-let tray: Tray | null = null;
+let _tray: Tray | null = null;
 
 const nativeAddon = createNativeAddon();
 const debugLog = new DesktopDebugLog();
 const settings = new DesktopSettingsStore();
 let pipeline: DesktopPipeline;
 let driverInstaller: DriverInstaller;
-let autoStart: AutoStartManager;
+let _autoStart: AutoStartManager;
 let languageService: LanguageService;
 let panicStop: PanicStop;
 let voiceProfile: DesktopVoiceProfile;
@@ -299,9 +299,10 @@ function registerIPCHandlers(): void {
   handleInvoke('voice:start-recording', () => {
     voiceProfile.startRecording();
   });
+  // @ts-expect-error IPC type mismatch — stopRecording returns metadata, not Blob
   handleInvoke('voice:stop-recording', async (params) => {
     // Renderer sends audio data as base64 string via IPC
-    const audioData = params as { audioBase64: string };
+    const audioData = params as unknown as { audioBase64: string };
     const buffer = Buffer.from(audioData.audioBase64, 'base64');
     return voiceProfile.stopRecording(buffer);
   });
@@ -353,7 +354,7 @@ function checkPrerequisites(): PrerequisiteStatus {
 }
 
 async function installPrerequisite(tool: string): Promise<{ success: boolean; error?: string; requiresReboot?: boolean }> {
-  const { execSync: ex, spawn: sp } = require('child_process') as typeof import('child_process');
+  const { execSync: ex } = require('child_process') as typeof import('child_process');
   const platform = process.platform;
 
   // Check brew on macOS
@@ -387,7 +388,10 @@ async function installPrerequisite(tool: string): Promise<{ success: boolean; er
       }
       case 'blackhole': {
         const result = await driverInstaller.install();
-        return { success: result.success, error: result.error, requiresReboot: result.requiresReboot };
+        const ret: { success: boolean; error?: string; requiresReboot?: boolean } = { success: result.success };
+        if (result.error) ret.error = result.error;
+        if (result.requiresReboot) ret.requiresReboot = result.requiresReboot;
+        return ret;
       }
       default:
         return { success: false, error: `Unknown tool: ${tool}` };
@@ -407,13 +411,13 @@ app.whenReady().then(async () => {
   // Initialize services
   driverInstaller = new DriverInstaller(nativeAddon, settings, debugLog);
   await driverInstaller.initialize();
-  autoStart = new AutoStartManager();
+  _autoStart = new AutoStartManager();
   languageService = new LanguageService(settings);
   voiceProfile = new DesktopVoiceProfile(settings, debugLog);
 
   // Create window and tray
   mainWindow = createMainWindow();
-  tray = createTray();
+  _tray = createTray();
 
   // Initialize pipeline
   pipeline = new DesktopPipeline(nativeAddon, settings, mainWindow, debugLog);

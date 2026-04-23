@@ -9,7 +9,7 @@
  * Persists install state in settings so it survives restarts.
  */
 
-import { execSync, exec } from 'child_process';
+import { execSync } from 'child_process';
 import type { NativeAudioAddon } from '../native/native-addon.js';
 import type { DriverStatus, DriverInstallResult } from '../shared/types.js';
 import { DesktopSettingsStore } from './desktop-settings-store.js';
@@ -18,7 +18,6 @@ import { DesktopDebugLog } from './desktop-debug-log.js';
 // ── Driver Installer ────────────────────────────────────────
 
 export class DriverInstaller {
-  #nativeAddon: NativeAudioAddon;
   #settings: DesktopSettingsStore;
   #debugLog: DesktopDebugLog;
   #installed = false;
@@ -27,8 +26,7 @@ export class DriverInstaller {
   /** Called during install with progress updates. Set by the caller. */
   onProgress: ((percent: number, message: string) => void) | null = null;
 
-  constructor(nativeAddon: NativeAudioAddon, settings: DesktopSettingsStore, debugLog: DesktopDebugLog) {
-    this.#nativeAddon = nativeAddon;
+  constructor(_nativeAddon: NativeAudioAddon, settings: DesktopSettingsStore, debugLog: DesktopDebugLog) {
     this.#settings = settings;
     this.#debugLog = debugLog;
   }
@@ -239,7 +237,7 @@ export class DriverInstaller {
       const { spawn: spawnProcess } = require('child_process') as typeof import('child_process');
       const child = spawnProcess('osascript', ['-e', script], { stdio: 'ignore' });
 
-      child.on('error', (err: Error) => {
+      child.on('error', (_err: Error) => {
         p(0, 'Failed to open Terminal');
         resolve({
           success: false,
@@ -320,7 +318,7 @@ export class DriverInstaller {
   // ── Linux Install ─────────────────────────────────────────
 
   async #installLinux(): Promise<DriverInstallResult> {
-    const p = (pct: number, msg: string) => this.onProgress?.(pct, msg);
+    const _p = (pct: number, msg: string) => this.onProgress?.(pct, msg);
     const hasPipeWire = this.#commandExists('pw-cli');
     const hasPulseAudio = this.#commandExists('pactl');
 

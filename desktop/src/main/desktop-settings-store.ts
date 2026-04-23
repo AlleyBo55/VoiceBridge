@@ -91,7 +91,7 @@ interface StoredSettings {
 export class DesktopSettingsStore {
   #configDir: string;
   #settingsPath: string;
-  #cache: Partial<DesktopSettingsSchema> = {};
+  #cache: Record<string, unknown> = {};
   #encryptionKey: Buffer | null = null;
   #initialized = false;
   #writeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -121,14 +121,14 @@ export class DesktopSettingsStore {
   /** Set a setting value by key. Handles encryption transparently. */
   async set<K extends keyof DesktopSettingsSchema>(key: K, value: DesktopSettingsSchema[K]): Promise<void> {
     if (!this.#initialized) await this.initialize();
-    this.#cache[key] = value;
+    this.#cache[key as string] = value;
     this.#scheduleDiskWrite();
   }
 
   /** Get all settings (with defaults for missing keys). */
   async getAll(): Promise<DesktopSettingsSchema> {
     if (!this.#initialized) await this.initialize();
-    return { ...DEFAULT_SETTINGS, ...this.#cache };
+    return { ...DEFAULT_SETTINGS, ...this.#cache } as DesktopSettingsSchema;
   }
 
   /** Force immediate write to disk. */
@@ -199,7 +199,7 @@ export class DesktopSettingsStore {
           this.#cache[key as keyof DesktopSettingsSchema] = value as DesktopSettingsSchema[keyof DesktopSettingsSchema];
         }
       }
-      this.#cache.settingsSchemaVersion = CURRENT_SCHEMA_VERSION;
+      this.#cache['settingsSchemaVersion'] = CURRENT_SCHEMA_VERSION;
     }
 
     await this.flush();

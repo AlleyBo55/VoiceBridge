@@ -11,7 +11,6 @@ import type {
   IPCMessage,
   MainToRendererEvents,
   RendererToMainInvocations,
-  VALID_RENDERER_CHANNELS,
 } from '../shared/types.js';
 
 // ── IPC Message Validation ──────────────────────────────────
