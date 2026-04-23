@@ -218,44 +218,54 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
         console.log(`[Audio] Found BlackHole at audiotoolbox index ${this.#bhIdx}`);
       }
 
-      // Write MP3 to temp file
-      const mp3Path = join(tmpdir(), `vb-tts-${Date.now()}.mp3`);
+      const ts = Date.now();
+      const mp3Path = join(tmpdir(), `vb-tts-${ts}.mp3`);
+      const loudPath = join(tmpdir(), `vb-tts-${ts}-loud.mp3`);
       writeFileSync(mp3Path, audio);
 
-      // Play to BlackHole with volume boost
-      const bhProc = spawn('ffmpeg', [
-        '-y', '-i', mp3Path,
-        '-af', 'volume=3.0',
-        '-f', 'audiotoolbox',
-        '-audio_device_index', String(this.#bhIdx),
-        '',
-      ], { stdio: ['ignore', 'pipe', 'pipe'] });
+      // Step 1: Create a volume-boosted MP3 (used for both outputs)
+      const boost = spawn('ffmpeg', [
+        '-y', '-i', mp3Path, '-af', 'volume=6.0', loudPath,
+      ], { stdio: ['ignore', 'ignore', 'ignore'] });
 
-      let bhErr = '';
-      bhProc.stdout?.on('data', () => {});
-      bhProc.stderr?.on('data', (chunk: Buffer) => { bhErr += chunk.toString(); });
+      boost.on('close', (boostCode) => {
+        try { unlinkSync(mp3Path); } catch(_e) {}
+        const playFile = boostCode === 0 ? loudPath : mp3Path;
 
-      bhProc.on('close', (code) => {
-        console.log(`[Audio] ffmpeg→BlackHole exited code=${code}`);
-        if (code !== 0) console.error(`[Audio] ffmpeg stderr: ${bhErr.slice(-300)}`);
+        // Step 2: Play boosted MP3 to BlackHole
+        const bhProc = spawn('ffmpeg', [
+          '-y', '-i', playFile,
+          '-f', 'audiotoolbox',
+          '-audio_device_index', String(this.#bhIdx),
+          '',
+        ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
-        // After BlackHole finishes, play through speakers so user can hear it.
-        // Sequential = no reverb. File cleanup happens after speaker playback.
-        const speaker = spawn('afplay', ['--volume', '5', mp3Path], { stdio: 'ignore' });
-        speaker.on('close', () => { try { unlinkSync(mp3Path); } catch(_e2) {} });
-        speaker.on('error', () => { try { unlinkSync(mp3Path); } catch(_e3) {} });
+        let bhErr = '';
+        bhProc.stdout?.on('data', () => {});
+        bhProc.stderr?.on('data', (chunk: Buffer) => { bhErr += chunk.toString(); });
+
+        bhProc.on('close', (code) => {
+          console.log(`[Audio] ffmpeg→BlackHole exited code=${code}`);
+          if (code !== 0) console.error(`[Audio] ffmpeg stderr: ${bhErr.slice(-300)}`);
+
+          // Step 3: Play same boosted MP3 through speakers (sequential = no reverb)
+          const speaker = spawn('afplay', [playFile], { stdio: 'ignore' });
+          speaker.on('close', () => { try { unlinkSync(playFile); } catch(_e2) {} });
+          speaker.on('error', () => { try { unlinkSync(playFile); } catch(_e3) {} });
+        });
+        bhProc.on('error', (err) => {
+          console.error(`[Audio] ffmpeg spawn error: ${err.message}`);
+          try { unlinkSync(playFile); } catch(_e4) {}
+        });
       });
-      bhProc.on('error', (err) => {
-        console.error(`[Audio] ffmpeg spawn error: ${err.message}`);
-        try { unlinkSync(mp3Path); } catch(_e4) {}
-      });
+      boost.on('error', () => { try { unlinkSync(mp3Path); } catch(_e) {} });
     } else if (process.platform === 'linux') {
       const mp3Path = join(tmpdir(), `vb-tts-${Date.now()}.mp3`);
       writeFileSync(mp3Path, audio);
 
       const proc = spawn('ffmpeg', [
         '-y', '-i', mp3Path,
-        '-af', 'volume=3.0',
+        '-af', 'volume=6.0',
         '-f', 'pulse', 'voicebridge',
       ], { stdio: ['ignore', 'ignore', 'ignore'] });
       proc.on('close', () => { try { unlinkSync(mp3Path); } catch(_e) {} });
