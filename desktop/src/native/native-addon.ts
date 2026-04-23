@@ -368,16 +368,10 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
           if (match?.[1]) {
             return parseInt(match[1], 10);
           }
-          // If the line itself contains the name without colon
-          return 'BlackHole 2ch';
         }
       }
-      // Default name if installed but not found in profiler
-      // Try the standard name directly — sox will error if wrong
-      return 'BlackHole 2ch';
-    } catch {
-      return 'BlackHole 2ch'; // Assume default name
-    }
+    } catch {}
+    return null;
   }
 
   destroy(): void {
