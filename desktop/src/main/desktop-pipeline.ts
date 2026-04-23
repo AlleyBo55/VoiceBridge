@@ -253,6 +253,11 @@ export class DesktopPipeline {
     if (this.#pttActive) return; // Already pressed
     this.#pttActive = true;
     this.#debugLog.log('info', 'pipeline', 'PTT pressed — mic open');
+
+    // Connect STT on press if not already connected
+    if (!this.#sttWs || this.#sttWs.readyState !== WS.OPEN) {
+      this.#connectSTT();
+    }
   }
 
   /** Release PTT — commit and stop sending audio */
@@ -262,14 +267,15 @@ export class DesktopPipeline {
     this.#pttActive = false;
     this.#commitSTT();
     this.#debugLog.log('info', 'pipeline', 'PTT released — mic closed');
-    // Reconnect STT after commit so next press starts fresh (no accumulated buffer)
+    // Close STT after committed transcript arrives.
+    // The close handler won't auto-reconnect because #pttActive is false.
     setTimeout(() => {
-      if (this.#sessionActive && this.#sttWs) {
+      if (this.#sessionActive && this.#pttEnabled && !this.#pttActive && this.#sttWs) {
+        this.#debugLog.log('info', 'connection', 'PTT idle — closing STT until next press');
         try { this.#sttWs.close(); } catch(_e) {}
         this.#sttWs = null;
-        // close handler auto-reconnects
       }
-    }, 1500); // Wait 1.5s for committed_transcript to arrive before closing
+    }, 2000); // Wait 2s for committed_transcript to arrive
   }
 
   isPTTEnabled(): boolean { return this.#pttEnabled; }
@@ -323,6 +329,12 @@ export class DesktopPipeline {
         this.#sttWs = null;
         if (this.#sessionActive) {
           this.#emitConnectionState('stt', { status: 'disconnected' });
+          // In PTT mode: don't auto-reconnect if we closed intentionally (idle between presses)
+          // or if PTT is not currently pressed (server closed idle connection)
+          if (this.#pttEnabled && !this.#pttActive) {
+            this.#debugLog.log('info', 'connection', 'STT closed (PTT idle) — will reconnect on next press');
+            return;
+          }
           // Auto-reconnect after 500ms
           this.#debugLog.log('info', 'connection', 'STT auto-reconnecting in 500ms...');
           setTimeout(() => {
@@ -611,9 +623,15 @@ export class DesktopPipeline {
   async #speakWithRestTTS(text: string): Promise<void> {
     if (!text.trim()) return;
 
+    // Always read the latest voice ID — user may have changed it mid-session
+    const currentVoiceId = await this.#settings.get('voiceProfileId');
+    if (currentVoiceId) {
+      this.#voiceId = currentVoiceId;
+    }
+
     try {
       const response = await fetch(
-        `https://api.elevenlabs.io/v1/text-to-speech/${this.#voiceId}?output_format=pcm_24000`,
+        `https://api.elevenlabs.io/v1/text-to-speech/${this.#voiceId}?output_format=mp3_44100_128`,
         {
           method: 'POST',
           headers: {
@@ -645,9 +663,8 @@ export class DesktopPipeline {
         this.#latencyMonitor.markTTSFirstByte(this.#currentSequenceId);
         this.#emitStage(this.#currentSequenceId, 'SYNTHESIZED');
 
-        // Resample 24kHz → 48kHz and write to BlackHole
-        const resampled = this.#nativeAddon.resample(audioBuffer, 24000, 48000);
-        this.#nativeAddon.writeVirtualMic(resampled);
+        // Pass MP3 audio directly — sox/afplay handles decoding and playback
+        this.#nativeAddon.writeVirtualMic(audioBuffer);
 
         this.#emitStage(this.#currentSequenceId, 'PLAYED');
       }

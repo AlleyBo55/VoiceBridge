@@ -2,7 +2,7 @@ name: Build Windows (.exe)
 
 on:
   push:
-    branches: [master]
+    branches: [master, ci/github-workflows]
 
 permissions:
   contents: write
@@ -60,7 +60,14 @@ jobs:
           EXE=$(ls desktop/release/*.exe | head -1)
           cp "$EXE" "desktop/release/VoiceBridge-${{ steps.version.outputs.version }}-Windows-Setup.exe"
 
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VoiceBridge-Windows
+          path: desktop/release/VoiceBridge-${{ steps.version.outputs.version }}-Windows-Setup.exe
+
       - name: Create GitHub Release
+        if: github.ref == 'refs/heads/master'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
@@ -76,6 +83,7 @@ jobs:
           files: desktop/release/VoiceBridge-${{ steps.version.outputs.version }}-Windows-Setup.exe
 
       - name: Update latest-windows tag
+        if: github.ref == 'refs/heads/master'
         shell: bash
         run: |
           git tag -f latest-windows

@@ -29,7 +29,7 @@ export interface NativeAudioAddon {
   getDriverVersion(): string | null;
   installDriver(): DriverInstallResult;
   uninstallDriver(): boolean;
-  writeVirtualMic(pcm: Buffer): void;
+  writeVirtualMic(audio: Buffer, sampleRate?: number): void;
   getDriverStatus(): DriverStatus;
   resample(pcm: Buffer, fromRate: number, toRate: number): Buffer;
 }
@@ -129,17 +129,14 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
   /** Write PCM audio to the virtual mic (BlackHole / PulseAudio sink). */
   #outputChunkCount = 0;
 
-  writeVirtualMic(pcm: Buffer): void {
+  writeVirtualMic(audio: Buffer, _sampleRate = 44100): void {
     this.#outputChunkCount++;
     if (this.#outputChunkCount <= 5 || this.#outputChunkCount % 20 === 0) {
-      console.log(`[Audio] Writing ${pcm.length} bytes to virtual mic (chunk #${this.#outputChunkCount})`);
+      console.log(`[Audio] Writing ${audio.length} bytes to virtual mic (chunk #${this.#outputChunkCount})`);
     }
 
-    // Write as temp WAV and play with a short-lived ffmpeg → BlackHole
-    // No persistent pipe = no buffering = immediate playback
-    this.#playToBlackHole(pcm);
-    // Also play through speakers via afplay
-    this.#playThroughSpeaker(pcm);
+    // Write MP3 to BlackHole / virtual mic via sox or paplay.
+    this.#playToBlackHole(audio);
   }
 
   isDriverInstalled(): boolean { return false; }
@@ -206,45 +203,68 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
     ];
   }
 
-  #bhIdx: number | null = null;
+  #bhDeviceUid: string | null = null;
 
   /** Play PCM to BlackHole via a short-lived ffmpeg (no persistent pipe = no buffering) */
-  #playToBlackHole(pcm: Buffer): void {
+  #playToBlackHole(audio: Buffer): void {
     if (process.platform === 'darwin') {
-      if (this.#bhIdx === null) {
-        this.#bhIdx = this.#findBlackHoleIndex();
-        if (this.#bhIdx === null) {
+      // Find BlackHole device name for sox coreaudio targeting
+      if (this.#bhDeviceUid === null) {
+        this.#bhDeviceUid = this.#findBlackHoleUid();
+        if (this.#bhDeviceUid === null) {
           console.error('[Audio] BlackHole device not found — cannot output');
           return;
         }
-        console.log(`[Audio] Found BlackHole at audiotoolbox device index ${this.#bhIdx}`);
+        console.log(`[Audio] Found BlackHole: ${this.#bhDeviceUid}`);
       }
-      // Spawn a short-lived ffmpeg that reads the PCM from stdin and plays to BlackHole
-      const proc = spawn('ffmpeg', [
-        '-y', '-f', 's16le', '-ar', '48000', '-ac', '1', '-i', 'pipe:0',
-        '-f', 'audiotoolbox', '-audio_device_index', String(this.#bhIdx),
-        '',
-      ], { stdio: ['pipe', 'ignore', 'ignore'] });
-      proc.stdin?.on('error', () => {});
-      proc.on('error', () => {});
-      try {
-        proc.stdin?.write(pcm);
-        proc.stdin?.end(); // Signal EOF — ffmpeg will play and exit
-      } catch(_e) {}
+
+      // Write MP3 to temp file
+      const mp3Path = join(tmpdir(), `vb-tts-${Date.now()}.mp3`);
+      writeFileSync(mp3Path, audio);
+
+      // Use sox to play directly to BlackHole device via coreaudio.
+      // sox decodes MP3 and outputs clean audio to the target device.
+      const proc = spawn('sox', [
+        mp3Path,
+        '-t', 'coreaudio', this.#bhDeviceUid,
+      ], { stdio: ['ignore', 'ignore', 'pipe'] });
+
+      let stderrData = '';
+      proc.stderr?.on('data', (chunk: Buffer) => { stderrData += chunk.toString(); });
+
+      proc.on('close', (code) => {
+        try { unlinkSync(mp3Path); } catch(_e2) {}
+        if (code !== 0 && stderrData) {
+          console.error(`[Audio] sox exit ${code}: ${stderrData.slice(0, 200)}`);
+        }
+      });
+      proc.on('error', () => {
+        // sox not available — fall back to afplay (plays to default output)
+        console.error('[Audio] sox failed, falling back to afplay');
+        const fallback = spawn('afplay', [mp3Path], { stdio: 'ignore' });
+        fallback.on('close', () => { try { unlinkSync(mp3Path); } catch(_e4) {} });
+        fallback.on('error', () => { try { unlinkSync(mp3Path); } catch(_e5) {} });
+      });
     } else if (process.platform === 'linux') {
-      const proc = spawn('ffmpeg', [
-        '-f', 's16le', '-ar', '48000', '-ac', '1', '-i', 'pipe:0',
-        '-f', 'pulse', 'voicebridge',
-      ], { stdio: ['pipe', 'ignore', 'ignore'] });
-      proc.stdin?.on('error', () => {});
-      try { proc.stdin?.write(pcm); proc.stdin?.end(); } catch(_e) {}
+      // Write MP3 to temp file and use paplay to target the voicebridge null sink
+      // paplay needs WAV, so use sox to convert and pipe
+      const mp3Path = join(tmpdir(), `vb-tts-${Date.now()}.mp3`);
+      writeFileSync(mp3Path, audio);
+
+      const proc = spawn('sox', [
+        mp3Path, '-t', 'pulseaudio', 'voicebridge',
+      ], { stdio: ['ignore', 'ignore', 'ignore'] });
+      proc.on('close', () => { try { unlinkSync(mp3Path); } catch(_e) {} });
+      proc.on('error', () => { try { unlinkSync(mp3Path); } catch(_e) {} });
     }
   }
 
   // Speaker playback — plays TTS audio through default speakers using afplay (macOS built-in)
   #speakerPlayCount = 0;
 
-  /** Write raw PCM to a temp WAV file and play it with afplay (immediate, no buffering) */
+  /** Write raw PCM to a temp WAV file and play it with afplay (immediate, no buffering).
+   * Currently unused — kept for future "monitor" toggle to hear translations locally. */
+  // @ts-expect-error Retained for future speaker monitor feature
   #playThroughSpeaker(pcm: Buffer): void {
     if (process.platform !== 'darwin') return;
 
@@ -320,31 +340,39 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
     return '0';
   }
 
-  #findBlackHoleIndex(): number | null {
+  /** Find BlackHole device name for sox coreaudio output. */
+  #findBlackHoleUid(): string | null {
     try {
-      // List audiotoolbox output devices (different indices from avfoundation input)
-      const out = execSync(
-        'ffmpeg -f s16le -ar 48000 -ac 1 -i /dev/zero -t 0.01 -f audiotoolbox -list_devices true "" 2>&1 || true',
+      const profiler = execSync(
+        'system_profiler SPAudioDataType 2>/dev/null || true',
         { encoding: 'utf8', timeout: 5000 }
       );
-      for (const line of out.split('\n')) {
-        if (line.toLowerCase().includes('blackhole')) {
-          const match = line.match(/\[(\d+)]/);
-          if (match) {
-            const idx = parseInt(match[1] ?? '0', 10);
-            console.log(`[Audio] Found BlackHole at audiotoolbox device index ${idx}`);
-            return idx;
+      // Look for BlackHole in the audio device list
+      const lines = profiler.split('\n');
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (line && line.toLowerCase().includes('blackhole')) {
+          // The device name as shown by system_profiler is what sox uses
+          const nameMatch = line.match(/^\s*(.+?):\s*$/);
+          if (nameMatch?.[1]) {
+            return nameMatch[1].trim();
           }
+          // If the line itself contains the name without colon
+          return 'BlackHole 2ch';
         }
       }
-    } catch {}
-    return null;
+      // Default name if installed but not found in profiler
+      // Try the standard name directly — sox will error if wrong
+      return 'BlackHole 2ch';
+    } catch {
+      return 'BlackHole 2ch'; // Assume default name
+    }
   }
 
   destroy(): void {
     this.stopCapture();
     this.#outputChunkCount = 0;
-    this.#bhIdx = null;
+    this.#bhDeviceUid = null;
   }
 }
 
@@ -380,7 +408,7 @@ export class MockNativeAddon implements NativeAudioAddon {
   getDriverVersion(): string | null { return this.#driverInstalled ? '1.0.0' : null; }
   installDriver(): DriverInstallResult { this.#driverInstalled = true; return { success: true }; }
   uninstallDriver(): boolean { this.#driverInstalled = false; return true; }
-  writeVirtualMic(_pcm: Buffer): void {}
+  writeVirtualMic(_audio: Buffer, _sampleRate?: number): void {}
   getDriverStatus(): DriverStatus {
     return this.#driverInstalled ? { state: 'installed', version: '1.0.0', active: true, sampleRate: 48000 } : { state: 'not-installed' };
   }

@@ -2,7 +2,7 @@ name: Build macOS (.dmg)
 
 on:
   push:
-    branches: [master]
+    branches: [master, ci/github-workflows]
 
 permissions:
   contents: write
@@ -58,7 +58,14 @@ jobs:
           DMG=$(ls desktop/release/*.dmg | head -1)
           cp "$DMG" "desktop/release/VoiceBridge-${{ steps.version.outputs.version }}-macOS.dmg"
 
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VoiceBridge-macOS
+          path: desktop/release/VoiceBridge-${{ steps.version.outputs.version }}-macOS.dmg
+
       - name: Create GitHub Release
+        if: github.ref == 'refs/heads/master'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
@@ -74,6 +81,7 @@ jobs:
           files: desktop/release/VoiceBridge-${{ steps.version.outputs.version }}-macOS.dmg
 
       - name: Update latest-macos tag
+        if: github.ref == 'refs/heads/master'
         run: |
           git tag -f latest-macos
           git push -f origin latest-macos
