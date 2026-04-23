@@ -20,7 +20,10 @@
 
 ## Demo
 
-https://github.com/user-attachments/assets/demo.mov
+> Upload your demo video to a GitHub Issue, then replace this link with the URL GitHub gives you.
+
+<!-- Replace the URL below after uploading demo.mov via GitHub Issues -->
+<!-- https://github.com/user-attachments/assets/YOUR-VIDEO-ID -->
 
 <p align="center">
   <em>Indonesian → Korean, real-time, in the speaker's own cloned voice.</em>

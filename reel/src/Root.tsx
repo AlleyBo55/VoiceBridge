@@ -7,7 +7,7 @@ export const RemotionRoot: React.FC = () => {
       <Composition
         id="VoiceBridgeReel"
         component={VoiceBridgeReel}
-        durationInFrames={1020} // 34s at 30fps
+        durationInFrames={1090} // ~36s at 30fps
         fps={30}
         width={1080}
         height={1920}
