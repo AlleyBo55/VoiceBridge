@@ -1,0 +1,82 @@
+name: Build Windows (.exe)
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: write
+
+env:
+  NODE_VERSION: "20"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: desktop
+        run: npm run typecheck
+
+      - name: Build main process
+        working-directory: desktop
+        run: npm run build:main
+
+      - name: Build renderer
+        working-directory: desktop
+        run: npm run build:renderer
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./desktop/package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}-windows" >> "$GITHUB_OUTPUT"
+
+      - name: Package .exe
+        working-directory: desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run dist:win
+
+      - name: Rename artifact
+        shell: bash
+        run: |
+          EXE=$(ls desktop/release/*.exe | head -1)
+          cp "$EXE" "desktop/release/VoiceBridge-${{ steps.version.outputs.version }}-Windows-Setup.exe"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: VoiceBridge ${{ steps.version.outputs.version }} — Windows
+          body: |
+            ## Windows Installer
+
+            Download `VoiceBridge-${{ steps.version.outputs.version }}-Windows-Setup.exe` and run the installer.
+
+            Requires Windows 10+ and [VB-CABLE](https://vb-audio.com/Cable/) for virtual mic.
+          draft: false
+          prerelease: false
+          files: desktop/release/VoiceBridge-${{ steps.version.outputs.version }}-Windows-Setup.exe
+
+      - name: Update latest-windows tag
+        shell: bash
+        run: |
+          git tag -f latest-windows
+          git push -f origin latest-windows

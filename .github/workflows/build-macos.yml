@@ -1,0 +1,79 @@
+name: Build macOS (.dmg)
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: write
+
+env:
+  NODE_VERSION: "20"
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: desktop
+        run: npm run typecheck
+
+      - name: Build main process
+        working-directory: desktop
+        run: npm run build:main
+
+      - name: Build renderer
+        working-directory: desktop
+        run: npm run build:renderer
+
+      - name: Determine version
+        id: version
+        run: |
+          VERSION=$(node -p "require('./desktop/package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}-macos" >> "$GITHUB_OUTPUT"
+
+      - name: Package .dmg
+        working-directory: desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run dist:mac
+
+      - name: Rename artifact
+        run: |
+          DMG=$(ls desktop/release/*.dmg | head -1)
+          cp "$DMG" "desktop/release/VoiceBridge-${{ steps.version.outputs.version }}-macOS.dmg"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: VoiceBridge ${{ steps.version.outputs.version }} — macOS
+          body: |
+            ## macOS Installer
+
+            Download `VoiceBridge-${{ steps.version.outputs.version }}-macOS.dmg`, open it, and drag VoiceBridge to Applications.
+
+            Requires macOS 12+ and [BlackHole 2ch](https://existential.audio/blackhole/) for virtual mic.
+          draft: false
+          prerelease: false
+          files: desktop/release/VoiceBridge-${{ steps.version.outputs.version }}-macOS.dmg
+
+      - name: Update latest-macos tag
+        run: |
+          git tag -f latest-macos
+          git push -f origin latest-macos

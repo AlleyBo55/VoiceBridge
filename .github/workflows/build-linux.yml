@@ -1,0 +1,81 @@
+name: Build Linux (.deb)
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: write
+
+env:
+  NODE_VERSION: "20"
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: desktop
+        run: npm run typecheck
+
+      - name: Build main process
+        working-directory: desktop
+        run: npm run build:main
+
+      - name: Build renderer
+        working-directory: desktop
+        run: npm run build:renderer
+
+      - name: Determine version
+        id: version
+        run: |
+          VERSION=$(node -p "require('./desktop/package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}-linux" >> "$GITHUB_OUTPUT"
+
+      - name: Package .deb
+        working-directory: desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run dist:linux
+
+      - name: Rename artifact
+        run: |
+          DEB=$(ls desktop/release/*.deb | head -1)
+          cp "$DEB" "desktop/release/VoiceBridge-${{ steps.version.outputs.version }}-Linux.deb"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: VoiceBridge ${{ steps.version.outputs.version }} — Linux
+          body: |
+            ## Linux Installer
+
+            ```bash
+            sudo dpkg -i VoiceBridge-${{ steps.version.outputs.version }}-Linux.deb
+            ```
+
+            Requires Ubuntu 22.04+ with PulseAudio or PipeWire.
+          draft: false
+          prerelease: false
+          files: desktop/release/VoiceBridge-${{ steps.version.outputs.version }}-Linux.deb
+
+      - name: Update latest-linux tag
+        run: |
+          git tag -f latest-linux
+          git push -f origin latest-linux
