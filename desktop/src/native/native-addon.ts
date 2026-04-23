@@ -223,10 +223,11 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
       writeFileSync(mp3Path, audio);
       console.log(`[Audio] Wrote ${audio.length} bytes to ${mp3Path}`);
 
-      // audiotoolbox output — empty string as output path (device output, no file)
+      // audiotoolbox output with volume boost — empty string as output path
       const args = [
         '-y',
         '-i', mp3Path,
+        '-af', 'volume=3.0',
         '-f', 'audiotoolbox',
         '-audio_device_index', String(this.#bhIdx),
         '',
@@ -246,9 +247,8 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
         try { unlinkSync(mp3Path); } catch(_e2) {}
       });
 
-      // Also play through default speakers so user can hear the translation locally.
-      // This runs in parallel with the BlackHole output — not sequentially.
-      spawn('afplay', [mp3Path], { stdio: 'ignore' });
+      // Also play through default speakers (boosted) so user can hear locally.
+      spawn('afplay', ['--volume', '2', mp3Path], { stdio: 'ignore' });
       proc.on('error', (err) => {
         console.error(`[Audio] ffmpeg spawn error: ${err.message}`);
         try { unlinkSync(mp3Path); } catch(_e3) {}
@@ -261,6 +261,7 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
       const proc = spawn('ffmpeg', [
         '-y',
         '-i', mp3Path,
+        '-af', 'volume=3.0',
         '-f', 'pulse', 'voicebridge',
       ], { stdio: ['ignore', 'ignore', 'ignore'] });
       proc.on('close', () => { try { unlinkSync(mp3Path); } catch(_e) {} });
