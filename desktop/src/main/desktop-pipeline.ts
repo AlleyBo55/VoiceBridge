@@ -611,6 +611,12 @@ export class DesktopPipeline {
   async #speakWithRestTTS(text: string): Promise<void> {
     if (!text.trim()) return;
 
+    // Always read the latest voice ID — user may have changed it mid-session
+    const currentVoiceId = await this.#settings.get('voiceProfileId');
+    if (currentVoiceId) {
+      this.#voiceId = currentVoiceId;
+    }
+
     try {
       const response = await fetch(
         `https://api.elevenlabs.io/v1/text-to-speech/${this.#voiceId}?output_format=pcm_24000`,
