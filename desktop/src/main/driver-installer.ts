@@ -318,7 +318,6 @@ export class DriverInstaller {
   // ── Linux Install ─────────────────────────────────────────
 
   async #installLinux(): Promise<DriverInstallResult> {
-    const _p = (pct: number, msg: string) => this.onProgress?.(pct, msg);
     const hasPipeWire = this.#commandExists('pw-cli');
     const hasPulseAudio = this.#commandExists('pactl');
 
