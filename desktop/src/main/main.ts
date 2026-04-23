@@ -45,14 +45,17 @@ function createMainWindow(): BrowserWindow {
   const isDev = process.env['NODE_ENV'] === 'development';
 
   const win = new BrowserWindow({
-    width: isDev ? 900 : 360,
-    height: isDev ? 750 : 480,
+    width: isDev ? 900 : 420,
+    height: isDev ? 750 : 680,
+    minWidth: 380,
+    minHeight: 520,
     show: false,
-    frame: isDev,
-    resizable: isDev,
-    skipTaskbar: !isDev,
+    frame: true,
+    resizable: true,
+    skipTaskbar: false,
     transparent: false,
     backgroundColor: '#000000',
+    titleBarStyle: isDev ? 'default' : 'hiddenInset',
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
