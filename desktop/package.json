@@ -7,8 +7,8 @@
   "main": "dist/main/main.js",
   "scripts": {
     "dev": "node scripts/dev.mjs",
-    "build": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.renderer.json --noEmit && vite build",
-    "build:main": "tsc -p tsconfig.main.json",
+    "build": "npm run typecheck && node scripts/build.mjs && vite build",
+    "build:main": "node scripts/build.mjs",
     "build:renderer": "vite build",
     "start": "electron dist/main/main.js",
     "test": "vitest run",
