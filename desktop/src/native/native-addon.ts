@@ -203,56 +203,64 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
     ];
   }
 
-  #bhDeviceUid: string | null = null;
+  #bhIdx: number | null = null;
 
   /** Play PCM to BlackHole via a short-lived ffmpeg (no persistent pipe = no buffering) */
   #playToBlackHole(audio: Buffer): void {
     if (process.platform === 'darwin') {
-      // Find BlackHole device name for sox coreaudio targeting
-      if (this.#bhDeviceUid === null) {
-        this.#bhDeviceUid = this.#findBlackHoleUid();
-        if (this.#bhDeviceUid === null) {
+      // Find BlackHole audiotoolbox device index
+      if (this.#bhIdx === null) {
+        this.#bhIdx = this.#findBlackHoleIndex();
+        if (this.#bhIdx === null) {
           console.error('[Audio] BlackHole device not found — cannot output');
           return;
         }
-        console.log(`[Audio] Found BlackHole: ${this.#bhDeviceUid}`);
+        console.log(`[Audio] Found BlackHole at audiotoolbox index ${this.#bhIdx}`);
       }
 
-      // Write MP3 to temp file
+      // Write MP3 to temp file, then use ffmpeg to decode and play to BlackHole.
       const mp3Path = join(tmpdir(), `vb-tts-${Date.now()}.mp3`);
       writeFileSync(mp3Path, audio);
+      console.log(`[Audio] Wrote ${audio.length} bytes to ${mp3Path}`);
 
-      // Use sox to play directly to BlackHole device via coreaudio.
-      // sox decodes MP3 and outputs clean audio to the target device.
-      const proc = spawn('sox', [
-        mp3Path,
-        '-t', 'coreaudio', this.#bhDeviceUid,
-      ], { stdio: ['ignore', 'ignore', 'pipe'] });
+      // audiotoolbox output — empty string as output path (device output, no file)
+      const args = [
+        '-y',
+        '-i', mp3Path,
+        '-f', 'audiotoolbox',
+        '-audio_device_index', String(this.#bhIdx),
+        '',
+      ];
+
+      const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
       let stderrData = '';
+      proc.stdout?.on('data', () => {}); // drain stdout
       proc.stderr?.on('data', (chunk: Buffer) => { stderrData += chunk.toString(); });
 
       proc.on('close', (code) => {
-        try { unlinkSync(mp3Path); } catch(_e2) {}
-        if (code !== 0 && stderrData) {
-          console.error(`[Audio] sox exit ${code}: ${stderrData.slice(0, 200)}`);
+        console.log(`[Audio] ffmpeg→BlackHole exited code=${code}`);
+        if (code !== 0) {
+          console.error(`[Audio] ffmpeg stderr: ${stderrData.slice(-500)}`);
         }
+        // Also play through default speakers so user can hear the translation
+        const speaker = spawn('afplay', [mp3Path], { stdio: 'ignore' });
+        speaker.on('close', () => { try { unlinkSync(mp3Path); } catch(_e4) {} });
+        speaker.on('error', () => { try { unlinkSync(mp3Path); } catch(_e5) {} });
       });
-      proc.on('error', () => {
-        // sox not available — fall back to afplay (plays to default output)
-        console.error('[Audio] sox failed, falling back to afplay');
-        const fallback = spawn('afplay', [mp3Path], { stdio: 'ignore' });
-        fallback.on('close', () => { try { unlinkSync(mp3Path); } catch(_e4) {} });
-        fallback.on('error', () => { try { unlinkSync(mp3Path); } catch(_e5) {} });
+      proc.on('error', (err) => {
+        console.error(`[Audio] ffmpeg spawn error: ${err.message}`);
+        try { unlinkSync(mp3Path); } catch(_e3) {}
       });
     } else if (process.platform === 'linux') {
-      // Write MP3 to temp file and use paplay to target the voicebridge null sink
-      // paplay needs WAV, so use sox to convert and pipe
+      // Write MP3 to temp file, use ffmpeg to decode and output to PulseAudio sink
       const mp3Path = join(tmpdir(), `vb-tts-${Date.now()}.mp3`);
       writeFileSync(mp3Path, audio);
 
-      const proc = spawn('sox', [
-        mp3Path, '-t', 'pulseaudio', 'voicebridge',
+      const proc = spawn('ffmpeg', [
+        '-y',
+        '-i', mp3Path,
+        '-f', 'pulse', 'voicebridge',
       ], { stdio: ['ignore', 'ignore', 'ignore'] });
       proc.on('close', () => { try { unlinkSync(mp3Path); } catch(_e) {} });
       proc.on('error', () => { try { unlinkSync(mp3Path); } catch(_e) {} });
@@ -340,39 +348,30 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
     return '0';
   }
 
-  /** Find BlackHole device name for sox coreaudio output. */
-  #findBlackHoleUid(): string | null {
+  /** Find BlackHole audiotoolbox device index using ffmpeg device listing. */
+  #findBlackHoleIndex(): number | null {
     try {
-      const profiler = execSync(
-        'system_profiler SPAudioDataType 2>/dev/null || true',
+      // List audiotoolbox output devices by providing a dummy input
+      const out = execSync(
+        'ffmpeg -f s16le -ar 48000 -ac 1 -i /dev/zero -t 0.001 -f audiotoolbox -list_devices true "" 2>&1 || true',
         { encoding: 'utf8', timeout: 5000 }
       );
-      // Look for BlackHole in the audio device list
-      const lines = profiler.split('\n');
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        if (line && line.toLowerCase().includes('blackhole')) {
-          // The device name as shown by system_profiler is what sox uses
-          const nameMatch = line.match(/^\s*(.+?):\s*$/);
-          if (nameMatch?.[1]) {
-            return nameMatch[1].trim();
+      for (const line of out.split('\n')) {
+        if (line.toLowerCase().includes('blackhole')) {
+          const match = line.match(/\[(\d+)]/);
+          if (match?.[1]) {
+            return parseInt(match[1], 10);
           }
-          // If the line itself contains the name without colon
-          return 'BlackHole 2ch';
         }
       }
-      // Default name if installed but not found in profiler
-      // Try the standard name directly — sox will error if wrong
-      return 'BlackHole 2ch';
-    } catch {
-      return 'BlackHole 2ch'; // Assume default name
-    }
+    } catch {}
+    return null;
   }
 
   destroy(): void {
     this.stopCapture();
     this.#outputChunkCount = 0;
-    this.#bhDeviceUid = null;
+    this.#bhIdx = null;
   }
 }
 
