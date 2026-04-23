@@ -203,7 +203,7 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
     ];
   }
 
-  #bhIdx: number | null = null;
+  #bhDeviceUid: string | null = null;
 
   /** Play PCM to BlackHole via a short-lived ffmpeg (no persistent pipe = no buffering) */
   #playToBlackHole(audio: Buffer): void {
@@ -379,16 +379,22 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
           if (match?.[1]) {
             return parseInt(match[1], 10);
           }
+          // If the line itself contains the name without colon
+          return 'BlackHole 2ch';
         }
       }
-    } catch {}
-    return null;
+      // Default name if installed but not found in profiler
+      // Try the standard name directly — sox will error if wrong
+      return 'BlackHole 2ch';
+    } catch {
+      return 'BlackHole 2ch'; // Assume default name
+    }
   }
 
   destroy(): void {
     this.stopCapture();
     this.#outputChunkCount = 0;
-    this.#bhIdx = null;
+    this.#bhDeviceUid = null;
   }
 }
 
