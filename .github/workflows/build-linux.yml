@@ -2,7 +2,7 @@ name: Build Linux (.deb)
 
 on:
   push:
-    branches: [master]
+    branches: [master, ci/github-workflows]
 
 permissions:
   contents: write
@@ -58,7 +58,14 @@ jobs:
           DEB=$(ls desktop/release/*.deb | head -1)
           cp "$DEB" "desktop/release/VoiceBridge-${{ steps.version.outputs.version }}-Linux.deb"
 
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VoiceBridge-Linux
+          path: desktop/release/VoiceBridge-${{ steps.version.outputs.version }}-Linux.deb
+
       - name: Create GitHub Release
+        if: github.ref == 'refs/heads/master'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
@@ -76,6 +83,7 @@ jobs:
           files: desktop/release/VoiceBridge-${{ steps.version.outputs.version }}-Linux.deb
 
       - name: Update latest-linux tag
+        if: github.ref == 'refs/heads/master'
         run: |
           git tag -f latest-linux
           git push -f origin latest-linux
