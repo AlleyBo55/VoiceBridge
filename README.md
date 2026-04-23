@@ -18,6 +18,29 @@
 
 ---
 
+## Demo
+
+https://github.com/user-attachments/assets/demo.mov
+
+<p align="center">
+  <em>Indonesian → Korean, real-time, in the speaker's own cloned voice.</em>
+</p>
+
+---
+
+## Screenshots
+
+<p align="center">
+  <img src="public/screenshots/1.png" width="360" alt="Onboarding — API Keys" />
+  <img src="public/screenshots/2.png" width="360" alt="Onboarding — Voice Clone" />
+</p>
+<p align="center">
+  <img src="public/screenshots/3.png" width="360" alt="Main View — Translation Active" />
+  <img src="public/screenshots/4.png" width="360" alt="Settings" />
+</p>
+
+---
+
 ## One More Thing.
 
 You're in a meeting with colleagues in Tokyo, clients in São Paulo, and partners in Berlin. You speak Indonesian. They hear you — fluently, naturally, instantly — in Japanese, Portuguese, and German. In *your* voice.
@@ -111,43 +134,27 @@ Five stages. Under 1.5 seconds. Works everywhere.
 
 ### Virtual Mic Driver (Per OS)
 
-VoiceBridge needs a virtual audio device so meeting apps can select it as a microphone. The app installs this automatically — click "Install Driver" in the main window.
-
 | OS | What Gets Installed | How |
 |----|-------------------|-----|
-| macOS | [BlackHole 2ch](https://existential.audio/blackhole/) | `brew install blackhole-2ch` (requires [Homebrew](https://brew.sh)) |
-| Ubuntu/Linux | PulseAudio/PipeWire null sink | `pactl load-module module-null-sink` (no elevation needed) |
+| macOS | [BlackHole 2ch](https://existential.audio/blackhole/) | `brew install blackhole-2ch` |
+| Ubuntu/Linux | PulseAudio/PipeWire null sink | `pactl load-module module-null-sink` |
 | Windows | [VB-CABLE](https://vb-audio.com/Cable/) | Manual download + Run as Administrator |
-
-**If install fails**, VoiceBridge shows the exact error and step-by-step resolution:
-
-| Error | Resolution |
-|-------|-----------|
-| macOS: "Homebrew not found" | Install Homebrew: `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"` |
-| macOS: "Permission denied" | Run `brew install blackhole-2ch` manually in Terminal |
-| macOS: "Xcode CLT required" | Run `xcode-select --install` first |
-| Linux: "No PulseAudio" | Install: `sudo apt install pulseaudio` (Ubuntu) or `sudo dnf install pulseaudio` (Fedora) |
-| Linux: "Daemon not running" | Start it: `systemctl --user start pipewire pipewire-pulse` |
-| Linux: "Module init failed" | Unload first: `pactl unload-module module-null-sink`, then retry |
-| Windows | Download VB-CABLE from [vb-audio.com/Cable](https://vb-audio.com/Cable/), run installer as Admin, reboot |
-
-After the driver is installed, select "BlackHole 2ch" (macOS), "VoiceBridge Mic" (Linux), or "CABLE Output" (Windows) as your microphone in any meeting app.
 
 ---
 
 ## Features
 
 ### Real-Time Voice Translation
-Speak naturally. Your words are transcribed, translated, and re-spoken in your cloned voice — all while you're still finishing your sentence. Token-by-token streaming. No waiting.
+Speak naturally. Your words are transcribed, translated, and re-spoken in your cloned voice — all while you're still finishing your sentence.
+
+### Push-to-Talk
+Hold SPACE or the on-screen button to talk. Each press is an independent utterance — no accumulation, no feedback loops, no background noise pickup.
 
 ### Your Voice. Every Language.
 Record 30 seconds. VoiceBridge clones your voice. Now you speak 90+ languages and it still sounds like you.
 
 ### Works With Everything
-Teams. Zoom. Google Meet. Discord. Slack. FaceTime. WhatsApp. Any app that uses a microphone. Select "VoiceBridge Mic" and go.
-
-### Ghost Mode 👻
-Whisper into the mic. VoiceBridge amplifies, translates, and speaks at full volume. You're silent. Your voice isn't.
+Teams. Zoom. Google Meet. Discord. Slack. FaceTime. WhatsApp. Any app that uses a microphone.
 
 ### Nothing Design Language
 OLED blacks. Space Mono labels. Mechanical toggles. System tray app that stays out of your way.
@@ -160,12 +167,12 @@ OLED blacks. Space Mono labels. Mechanical toggles. System tray app that stays o
 
 ```bash
 # macOS
-brew install ffmpeg
+brew install ffmpeg sox
 
 # Ubuntu/Debian
-sudo apt install ffmpeg
+sudo apt install ffmpeg sox
 
-# Windows — download from https://ffmpeg.org/download.html and add to PATH
+# Windows — download from https://ffmpeg.org/download.html
 ```
 
 ### 2. Clone and install
@@ -176,35 +183,27 @@ cd VoiceBridge/desktop
 npm install
 ```
 
-### 3. Build and run
+### 3. Run
 
 ```bash
 npm run dev
 ```
 
-### 4. Enter your API keys
+### 4. First launch
 
-On first launch, VoiceBridge walks you through onboarding:
+VoiceBridge walks you through setup:
 
-1. **API Keys** — enter your ElevenLabs key and LLM key (OpenAI, Anthropic, or OpenRouter). Keys are validated against the APIs before saving. Pick your LLM model (e.g. `openai/gpt-4o` for OpenRouter).
-2. **Voice Clone** — record 30+ seconds of your voice reading a prompt. VoiceBridge uploads it to ElevenLabs and creates a voice clone. You can skip this to use a default voice.
+1. **Prerequisites** — checks for ffmpeg, sox, and virtual mic driver. One-click install for each.
+2. **API Keys** — enter your ElevenLabs key and LLM key. Keys are validated before saving.
+3. **Voice Clone** — record 30+ seconds of your voice. Skip to use a default voice.
 
-Keys are encrypted with AES-GCM-256 and stored only on your device. VoiceBridge has no server — we never see your keys. You can change everything later in Settings.
+Keys are encrypted with AES-GCM-256 and stored only on your device. VoiceBridge has no server.
 
-### 5. Install the virtual mic driver
+### 5. Use it
 
-Click "Install Driver" in the main window. This is a one-time setup:
-- **macOS**: Installs BlackHole 2ch via Homebrew (~30 seconds)
-- **Linux**: Creates a PulseAudio/PipeWire virtual sink (instant)
-- **Windows**: Shows instructions to download VB-CABLE
-
-If it fails, the app shows the exact error and how to fix it.
-
-### 6. Use it
-
-1. Open any meeting app → select "BlackHole 2ch" (macOS) or "VoiceBridge Mic" (Linux) as your microphone
-3. Toggle translation on in the VoiceBridge tray app
-4. Speak — other participants hear your translated voice
+1. Open any meeting app → select "BlackHole 2ch" as your microphone
+2. Toggle translation on in VoiceBridge
+3. Hold SPACE and speak — other participants hear your translated voice
 
 ---
 
@@ -221,22 +220,21 @@ If it fails, the app shows the exact error and how to fix it.
 |-------|--------|-----|
 | App Shell | Electron | Cross-platform desktop, native addon support |
 | UI | Preact + CSS Custom Properties | 3KB gzipped, Nothing design system |
-| Audio I/O | ffmpeg (avfoundation / pulse / dshow) | Real mic capture + virtual mic output, cross-platform |
-| Virtual Mic | BlackHole (macOS) / PulseAudio (Linux) / VB-CABLE (Windows) | OS-level virtual audio device |
+| Audio I/O | ffmpeg | Real mic capture + virtual mic output |
+| Virtual Mic | BlackHole / PulseAudio / VB-CABLE | OS-level virtual audio device |
 | STT | ElevenLabs Scribe v2 Realtime | 150ms latency, 90+ languages |
 | TTS | ElevenLabs Flash v2.5 | 75ms latency, voice cloning |
-| Translation | OpenAI / Anthropic / OpenRouter | Streaming, contextual, 200+ models |
+| Translation | OpenAI / Anthropic / OpenRouter | Streaming, 200+ models |
 | Testing | Vitest + fast-check | Property-based correctness |
 
 ---
 
 ## Privacy
 
-- Audio is streamed, never stored — not on disk, not after session ends
-- API keys encrypted with AES-GCM-256 via Node.js crypto
+- Audio is streamed, never stored
+- API keys encrypted with AES-GCM-256
 - No analytics. No tracking. No telemetry.
-- No embedded keys — the build ships completely empty
-- API keys never leave the main process — renderer has no access
+- No embedded keys — the build ships empty
 - Panic button (Ctrl/Cmd+Shift+X) kills everything instantly
 
 ---
@@ -245,9 +243,10 @@ If it fails, the app shows the exact error and how to fix it.
 
 | Shortcut | Action |
 |----------|--------|
+| `Space` | Push-to-talk (hold to speak) |
 | `Ctrl/Cmd+Shift+T` | Toggle translation |
 | `Ctrl/Cmd+Shift+G` | Toggle Ghost Mode |
-| `Ctrl/Cmd+Shift+X` | Panic stop — kill everything |
+| `Ctrl/Cmd+Shift+X` | Panic stop |
 
 ---
 
@@ -256,12 +255,9 @@ If it fails, the app shows the exact error and how to fix it.
 ```bash
 cd desktop
 npm install          # Install dependencies
-npm run dev          # Build + launch Electron with hot-reload renderer
-npm run test         # Run tests (42 property-based tests)
-npm run typecheck    # TypeScript strict check
+npm run dev          # Build + launch Electron with hot-reload
+npm run test         # Run 42 property-based tests
 ```
-
-`npm run dev` compiles the main process + preload with esbuild, starts a Vite dev server for the renderer, and launches Electron with DevTools open.
 
 ### Project Structure
 
@@ -269,98 +265,40 @@ npm run typecheck    # TypeScript strict check
 desktop/
 ├── src/
 │   ├── main/           # Electron main process
-│   │   ├── main.ts             # Entry point, tray, window, IPC handlers
-│   │   ├── audio-router.ts     # Mic capture, VAD, noise gate, virtual mic output
-│   │   ├── desktop-pipeline.ts # End-to-end: Mic → STT → LLM → TTS → BlackHole
-│   │   ├── desktop-settings-store.ts  # AES-GCM-256 encrypted JSON settings
-│   │   ├── desktop-latency.ts  # Latency monitor with color mapping
-│   │   ├── desktop-debug-log.ts # 500-entry ring buffer
-│   │   ├── driver-installer.ts # Real virtual mic driver (BlackHole/PulseAudio/VB-CABLE)
-│   │   ├── desktop-voice-profile.ts # Multi-voice clone management via ElevenLabs API
-│   │   ├── auto-start.ts       # Login item management
-│   │   ├── language-service.ts  # Language list caching + filtering
-│   │   ├── panic-stop.ts       # Global Cmd/Ctrl+Shift+X
-│   │   └── electron-ipc.ts     # Typed IPC with validation
-│   ├── native/         # N-API addon interface (Rust, mock for dev)
-│   ├── preload/        # contextBridge API (security boundary)
-│   ├── renderer/       # Preact UI (Nothing design system)
-│   └── shared/         # Types, platform utilities
-├── tests/
-│   └── properties/     # Property-based tests (fast-check)
-└── package.json
+│   │   ├── main.ts             # Entry, tray, window, IPC
+│   │   ├── desktop-pipeline.ts # Mic → STT → LLM → TTS → BlackHole
+│   │   ├── audio-router.ts     # VAD, noise gate, routing
+│   │   ├── driver-installer.ts # Virtual mic driver install
+│   │   └── ...
+│   ├── native/         # ffmpeg audio I/O
+│   ├── preload/        # Security boundary
+│   ├── renderer/       # Preact UI
+│   └── shared/         # Types, platform utils
+└── tests/properties/   # Property-based tests
 ```
-
-### Pipeline Architecture
-
-The desktop pipeline (`desktop-pipeline.ts`) wires the full translation flow directly:
-
-```
-Mic Capture → [WebSocket] ElevenLabs Scribe v2 STT
-                    ↓ transcript
-            [HTTP SSE] LLM Translation (OpenAI/Anthropic/OpenRouter)
-                    ↓ tokens streamed one-by-one
-            [WebSocket] ElevenLabs Flash v2.5 TTS
-                    ↓ PCM audio
-            Resample 24kHz→48kHz → Write to BlackHole
-```
-
-All connections run in the Electron main process. No browser APIs, no offscreen documents, no content scripts. The renderer only shows the UI — all audio and API calls happen in Node.js.
-
-### Reference Modules (from `src/lib/`)
-
-The Chrome extension's pure-logic modules are kept as reference:
-
-| Module | Purpose |
-|--------|---------|
-| `echo-cancellation.ts` | Three-state echo cancellation machine |
-| `audio-routing.ts` | Pure audio routing state machine |
-| `degradation-manager.ts` | Graceful degradation cascade |
-| `cleanup-sequencer.ts` | Deterministic ordered cleanup |
-| `latency-monitor.ts` | Per-stage timing |
-| `types.ts` | All shared type definitions |
 
 ---
 
-## Project History
+## Built With Spec-Driven Development
 
-| Phase | What | Status |
-|-------|------|--------|
-| Phase 1 | Chrome Extension — core pipeline, UI, onboarding | ✓ Complete |
-| Phase 2 | Pipeline hardening — orchestrator, state machines, degradation | ✓ Complete |
-| Phase 3 | Desktop app — Electron, virtual mic, end-to-end pipeline | ✓ Complete |
+This project was built using [Kiro](https://kiro.dev)'s spec-driven development — requirements → design → implementation, systematically.
+
+### The Specs
+
+**Phase 1 — Chrome Extension**
+- [Requirements](.kiro/specs/voice-translate-chrome-extension/requirements.md) · [Design](.kiro/specs/voice-translate-chrome-extension/design.md) · [Tasks](.kiro/specs/voice-translate-chrome-extension/tasks.md)
+
+**Phase 2 — Pipeline Hardening**
+- [Requirements](.kiro/specs/pipeline-hardening/requirements.md) · [Design](.kiro/specs/pipeline-hardening/design.md) · [Tasks](.kiro/specs/pipeline-hardening/tasks.md)
+
+**Phase 3 — Desktop App**
+- [Requirements](.kiro/specs/desktop-app-rewrite/requirements.md) · [Design](.kiro/specs/desktop-app-rewrite/design.md) · [Tasks](.kiro/specs/desktop-app-rewrite/tasks.md)
 
 ---
 
 ## License
 
 MIT — use it, fork it, ship it.
-
----
-
-## Built With Spec-Driven Development
-
-This entire project was built using [Kiro](https://kiro.dev)'s spec-driven development — you write specifications for what you want to build, and the AI agent helps you implement them systematically. Every feature started as a requirement, became a design, then became code.
-
-### The Specs
-
-**Phase 1 — Chrome Extension (Core Pipeline)**
-- [Requirements](.kiro/specs/voice-translate-chrome-extension/requirements.md) — 34 requirements, 200+ acceptance criteria
-- [Design](.kiro/specs/voice-translate-chrome-extension/design.md) — system architecture, state machines, WebSocket protocols
-- [Tasks](.kiro/specs/voice-translate-chrome-extension/tasks.md) — 30 implementation tasks
-
-**Phase 2 — Pipeline Hardening**
-- [Requirements](.kiro/specs/pipeline-hardening/requirements.md) — 10 requirements for production-quality pipeline
-- [Design](.kiro/specs/pipeline-hardening/design.md) — 7 new components, 15 correctness properties
-- [Tasks](.kiro/specs/pipeline-hardening/tasks.md) — 18 tasks with checkpoints
-
-**Phase 3 — Desktop App Rewrite (Virtual Microphone)**
-- [Requirements](.kiro/specs/desktop-app-rewrite/requirements.md) — 12 requirements for cross-platform desktop app
-- [Design](.kiro/specs/desktop-app-rewrite/design.md) — Electron + N-API architecture, 21 correctness properties
-- [Tasks](.kiro/specs/desktop-app-rewrite/tasks.md) — 19 tasks, 48 sub-tasks
-
-### The Hackathon
-
-Built for [ElevenLabs × Kiro Hackathon (Hack #5)](https://hacks.elevenlabs.io/hackathons/4) — a weekly hackathon challenging developers to build AI-powered apps using Kiro's spec-driven development and ElevenLabs APIs.
 
 ---
 
