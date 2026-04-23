@@ -208,22 +208,13 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
   /** Play PCM to BlackHole via a short-lived ffmpeg (no persistent pipe = no buffering) */
   #playToBlackHole(audio: Buffer): void {
     if (process.platform === 'darwin') {
-      // Find BlackHole audiotoolbox device index
-      if (this.#bhIdx === null) {
-        this.#bhIdx = this.#findBlackHoleIndex();
-        if (this.#bhIdx === null) {
-          console.error('[Audio] BlackHole device not found — cannot output');
-          return;
-        }
-        console.log(`[Audio] Found BlackHole at audiotoolbox index ${this.#bhIdx}`);
-      }
-
       const ts = Date.now();
       const mp3Path = join(tmpdir(), `vb-tts-${ts}.mp3`);
       const loudPath = join(tmpdir(), `vb-tts-${ts}-loud.mp3`);
       writeFileSync(mp3Path, audio);
 
-      // Step 1: Create a volume-boosted MP3 (used for both outputs)
+      // Boost volume, then play through default audio output (speakers/headphones).
+      // BlackHole output is handled separately by the meeting app reading from it.
       const boost = spawn('ffmpeg', [
         '-y', '-i', mp3Path, '-af', 'volume=6.0', loudPath,
       ], { stdio: ['ignore', 'ignore', 'ignore'] });
@@ -232,44 +223,34 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
         try { unlinkSync(mp3Path); } catch(_e) {}
         const playFile = boostCode === 0 ? loudPath : mp3Path;
 
-        // Step 2: Play boosted MP3 to BlackHole
-        const bhProc = spawn('ffmpeg', [
-          '-y', '-i', playFile,
-          '-f', 'audiotoolbox',
-          '-audio_device_index', String(this.#bhIdx),
-          '',
-        ], { stdio: ['ignore', 'pipe', 'pipe'] });
-
-        let bhErr = '';
-        bhProc.stdout?.on('data', () => {});
-        bhProc.stderr?.on('data', (chunk: Buffer) => { bhErr += chunk.toString(); });
-
-        bhProc.on('close', (code) => {
-          console.log(`[Audio] ffmpeg→BlackHole exited code=${code}`);
-          if (code !== 0) console.error(`[Audio] ffmpeg stderr: ${bhErr.slice(-300)}`);
-
-          // Step 3: Play same boosted MP3 through speakers (sequential = no reverb)
-          const speaker = spawn('afplay', [playFile], { stdio: 'ignore' });
-          speaker.on('close', () => { try { unlinkSync(playFile); } catch(_e2) {} });
-          speaker.on('error', () => { try { unlinkSync(playFile); } catch(_e3) {} });
+        // Play through default output device (speakers or headphones)
+        const speaker = spawn('afplay', [playFile], { stdio: 'ignore' });
+        speaker.on('close', () => {
+          console.log('[Audio] afplay finished');
+          try { unlinkSync(playFile); } catch(_e2) {}
         });
-        bhProc.on('error', (err) => {
-          console.error(`[Audio] ffmpeg spawn error: ${err.message}`);
-          try { unlinkSync(playFile); } catch(_e4) {}
-        });
+        speaker.on('error', () => { try { unlinkSync(playFile); } catch(_e3) {} });
       });
       boost.on('error', () => { try { unlinkSync(mp3Path); } catch(_e) {} });
     } else if (process.platform === 'linux') {
       const mp3Path = join(tmpdir(), `vb-tts-${Date.now()}.mp3`);
+      const loudPath = mp3Path.replace('.mp3', '-loud.mp3');
       writeFileSync(mp3Path, audio);
 
-      const proc = spawn('ffmpeg', [
-        '-y', '-i', mp3Path,
-        '-af', 'volume=6.0',
-        '-f', 'pulse', 'voicebridge',
+      const boost = spawn('ffmpeg', [
+        '-y', '-i', mp3Path, '-af', 'volume=6.0', loudPath,
       ], { stdio: ['ignore', 'ignore', 'ignore'] });
-      proc.on('close', () => { try { unlinkSync(mp3Path); } catch(_e) {} });
-      proc.on('error', () => { try { unlinkSync(mp3Path); } catch(_e) {} });
+
+      boost.on('close', (boostCode) => {
+        try { unlinkSync(mp3Path); } catch(_e) {}
+        const playFile = boostCode === 0 ? loudPath : mp3Path;
+
+        // Play through PulseAudio default sink
+        const proc = spawn('paplay', [playFile], { stdio: ['ignore', 'ignore', 'ignore'] });
+        proc.on('close', () => { try { unlinkSync(playFile); } catch(_e2) {} });
+        proc.on('error', () => { try { unlinkSync(playFile); } catch(_e3) {} });
+      });
+      boost.on('error', () => { try { unlinkSync(mp3Path); } catch(_e) {} });
     }
   }
 
