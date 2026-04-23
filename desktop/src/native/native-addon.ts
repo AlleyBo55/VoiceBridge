@@ -218,50 +218,65 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
         console.log(`[Audio] Found BlackHole at audiotoolbox index ${this.#bhIdx}`);
       }
 
-      // Write MP3 to temp file, then use ffmpeg to decode and play to BlackHole.
+      // Write MP3 to temp file
       const mp3Path = join(tmpdir(), `vb-tts-${Date.now()}.mp3`);
       writeFileSync(mp3Path, audio);
-      console.log(`[Audio] Wrote ${audio.length} bytes to ${mp3Path}`);
 
-      // audiotoolbox output with volume boost — empty string as output path
-      const args = [
-        '-y',
-        '-i', mp3Path,
-        '-af', 'volume=3.0',
-        '-f', 'audiotoolbox',
-        '-audio_device_index', String(this.#bhIdx),
-        '',
-      ];
+      // First: convert MP3 to volume-boosted WAV (ffmpeg normalizes + amplifies)
+      const wavPath = mp3Path.replace('.mp3', '.wav');
+      const convert = spawn('ffmpeg', [
+        '-y', '-i', mp3Path,
+        '-af', 'loudnorm=I=-14:TP=-1:LRA=11,volume=2.0',
+        '-ar', '44100', '-ac', '1',
+        wavPath,
+      ], { stdio: ['ignore', 'ignore', 'pipe'] });
 
-      const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      let convertErr = '';
+      convert.stderr?.on('data', (chunk: Buffer) => { convertErr += chunk.toString(); });
 
-      let stderrData = '';
-      proc.stdout?.on('data', () => {}); // drain stdout
-      proc.stderr?.on('data', (chunk: Buffer) => { stderrData += chunk.toString(); });
+      convert.on('close', (convertCode) => {
+        try { unlinkSync(mp3Path); } catch(_e) {}
 
-      proc.on('close', (code) => {
-        console.log(`[Audio] ffmpeg→BlackHole exited code=${code}`);
-        if (code !== 0) {
-          console.error(`[Audio] ffmpeg stderr: ${stderrData.slice(-500)}`);
+        if (convertCode !== 0) {
+          console.error(`[Audio] Volume boost failed: ${convertErr.slice(-300)}`);
+          return;
         }
-        try { unlinkSync(mp3Path); } catch(_e2) {}
-      });
 
-      // Also play through default speakers (boosted) so user can hear locally.
-      spawn('afplay', ['--volume', '2', mp3Path], { stdio: 'ignore' });
-      proc.on('error', (err) => {
-        console.error(`[Audio] ffmpeg spawn error: ${err.message}`);
-        try { unlinkSync(mp3Path); } catch(_e3) {}
+        // Play boosted WAV to BlackHole
+        const bhProc = spawn('ffmpeg', [
+          '-y', '-i', wavPath,
+          '-f', 'audiotoolbox',
+          '-audio_device_index', String(this.#bhIdx),
+          '',
+        ], { stdio: ['ignore', 'pipe', 'pipe'] });
+
+        let bhErr = '';
+        bhProc.stdout?.on('data', () => {});
+        bhProc.stderr?.on('data', (chunk: Buffer) => { bhErr += chunk.toString(); });
+
+        bhProc.on('close', (code) => {
+          console.log(`[Audio] ffmpeg→BlackHole exited code=${code}`);
+          if (code !== 0) console.error(`[Audio] ffmpeg stderr: ${bhErr.slice(-300)}`);
+        });
+        bhProc.on('error', (err) => {
+          console.error(`[Audio] ffmpeg spawn error: ${err.message}`);
+        });
+
+        // Play boosted WAV through speakers in parallel
+        const speaker = spawn('afplay', [wavPath], { stdio: 'ignore' });
+        speaker.on('close', () => { try { unlinkSync(wavPath); } catch(_e2) {} });
+        speaker.on('error', () => { try { unlinkSync(wavPath); } catch(_e3) {} });
+      });
+      convert.on('error', () => {
+        try { unlinkSync(mp3Path); } catch(_e) {}
       });
     } else if (process.platform === 'linux') {
-      // Write MP3 to temp file, use ffmpeg to decode and output to PulseAudio sink
       const mp3Path = join(tmpdir(), `vb-tts-${Date.now()}.mp3`);
       writeFileSync(mp3Path, audio);
 
       const proc = spawn('ffmpeg', [
-        '-y',
-        '-i', mp3Path,
-        '-af', 'volume=3.0',
+        '-y', '-i', mp3Path,
+        '-af', 'loudnorm=I=-14:TP=-1:LRA=11,volume=2.0',
         '-f', 'pulse', 'voicebridge',
       ], { stdio: ['ignore', 'ignore', 'ignore'] });
       proc.on('close', () => { try { unlinkSync(mp3Path); } catch(_e) {} });
