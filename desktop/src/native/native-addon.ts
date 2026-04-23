@@ -203,7 +203,7 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
     ];
   }
 
-  #bhDeviceUid: string | null = null;
+  #bhIdx: number | null = null;
 
   /** Play PCM to BlackHole via a short-lived ffmpeg (no persistent pipe = no buffering) */
   #playToBlackHole(audio: Buffer): void {
@@ -222,52 +222,32 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
       const mp3Path = join(tmpdir(), `vb-tts-${Date.now()}.mp3`);
       writeFileSync(mp3Path, audio);
 
-      // Convert MP3 → volume-boosted WAV, then play to BlackHole only.
-      // User hears audio through the meeting app, not direct speaker playback.
-      // This avoids the reverb caused by dual playback with timing offset.
-      const wavPath = mp3Path.replace('.mp3', '.wav');
-      const convert = spawn('ffmpeg', [
+      // Play to BlackHole with volume boost
+      const bhProc = spawn('ffmpeg', [
         '-y', '-i', mp3Path,
         '-af', 'volume=3.0',
-        '-ar', '44100', '-ac', '1',
-        wavPath,
-      ], { stdio: ['ignore', 'ignore', 'pipe'] });
+        '-f', 'audiotoolbox',
+        '-audio_device_index', String(this.#bhIdx),
+        '',
+      ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
-      let convertErr = '';
-      convert.stderr?.on('data', (chunk: Buffer) => { convertErr += chunk.toString(); });
+      let bhErr = '';
+      bhProc.stdout?.on('data', () => {});
+      bhProc.stderr?.on('data', (chunk: Buffer) => { bhErr += chunk.toString(); });
 
-      convert.on('close', (convertCode) => {
-        try { unlinkSync(mp3Path); } catch(_e) {}
+      bhProc.on('close', (code) => {
+        console.log(`[Audio] ffmpeg→BlackHole exited code=${code}`);
+        if (code !== 0) console.error(`[Audio] ffmpeg stderr: ${bhErr.slice(-300)}`);
 
-        if (convertCode !== 0) {
-          console.error(`[Audio] Volume boost failed: ${convertErr.slice(-300)}`);
-          return;
-        }
-
-        // Play boosted WAV to BlackHole
-        const bhProc = spawn('ffmpeg', [
-          '-y', '-i', wavPath,
-          '-f', 'audiotoolbox',
-          '-audio_device_index', String(this.#bhIdx),
-          '',
-        ], { stdio: ['ignore', 'pipe', 'pipe'] });
-
-        let bhErr = '';
-        bhProc.stdout?.on('data', () => {});
-        bhProc.stderr?.on('data', (chunk: Buffer) => { bhErr += chunk.toString(); });
-
-        bhProc.on('close', (code) => {
-          console.log(`[Audio] ffmpeg→BlackHole exited code=${code}`);
-          if (code !== 0) console.error(`[Audio] ffmpeg stderr: ${bhErr.slice(-300)}`);
-          try { unlinkSync(wavPath); } catch(_e2) {}
-        });
-        bhProc.on('error', (err) => {
-          console.error(`[Audio] ffmpeg spawn error: ${err.message}`);
-          try { unlinkSync(wavPath); } catch(_e3) {}
-        });
+        // After BlackHole finishes, play through speakers so user can hear it.
+        // Sequential = no reverb. File cleanup happens after speaker playback.
+        const speaker = spawn('afplay', ['--volume', '5', mp3Path], { stdio: 'ignore' });
+        speaker.on('close', () => { try { unlinkSync(mp3Path); } catch(_e2) {} });
+        speaker.on('error', () => { try { unlinkSync(mp3Path); } catch(_e3) {} });
       });
-      convert.on('error', () => {
-        try { unlinkSync(mp3Path); } catch(_e) {}
+      bhProc.on('error', (err) => {
+        console.error(`[Audio] ffmpeg spawn error: ${err.message}`);
+        try { unlinkSync(mp3Path); } catch(_e4) {}
       });
     } else if (process.platform === 'linux') {
       const mp3Path = join(tmpdir(), `vb-tts-${Date.now()}.mp3`);
@@ -393,7 +373,7 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
   destroy(): void {
     this.stopCapture();
     this.#outputChunkCount = 0;
-    this.#bhDeviceUid = null;
+    this.#bhIdx = null;
   }
 }
 
