@@ -1119,6 +1119,7 @@ function App() {
   const [installing, setInstalling] = useState(false);
   const [installPercent, setInstallPercent] = useState(0);
   const [installMessage, setInstallMessage] = useState('');
+  const [pttActive, setPttActive] = useState(false);
 
   // Load initial settings
   useEffect(() => {
