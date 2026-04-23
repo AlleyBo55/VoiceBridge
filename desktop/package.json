@@ -3,7 +3,15 @@
   "version": "1.0.0",
   "type": "module",
   "description": "VoiceBridge Desktop — Real-time voice translation with OS-level virtual microphone",
-  "author": "AlleyBo55",
+  "homepage": "https://github.com/AlleyBo55/VoiceBridge",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AlleyBo55/VoiceBridge.git"
+  },
+  "author": {
+    "name": "AlleyBo55",
+    "email": "alleybo55@users.noreply.github.com"
+  },
   "main": "dist/main/main.js",
   "scripts": {
     "dev": "node scripts/dev.mjs",
@@ -28,6 +36,7 @@
       "dist/**/*",
       "!node_modules/**/*"
     ],
+    "publish": null,
     "extraResources": [],
     "mac": {
       "category": "public.app-category.productivity",
