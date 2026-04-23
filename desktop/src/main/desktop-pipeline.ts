@@ -631,7 +631,7 @@ export class DesktopPipeline {
 
     try {
       const response = await fetch(
-        `https://api.elevenlabs.io/v1/text-to-speech/${this.#voiceId}?output_format=pcm_24000`,
+        `https://api.elevenlabs.io/v1/text-to-speech/${this.#voiceId}?output_format=mp3_44100_128`,
         {
           method: 'POST',
           headers: {
@@ -663,8 +663,8 @@ export class DesktopPipeline {
         this.#latencyMonitor.markTTSFirstByte(this.#currentSequenceId);
         this.#emitStage(this.#currentSequenceId, 'SYNTHESIZED');
 
-        // Pass raw 24kHz PCM directly — ffmpeg handles resampling to 48kHz in writeVirtualMic
-        this.#nativeAddon.writeVirtualMic(audioBuffer, 24000);
+        // Pass MP3 audio directly — sox/afplay handles decoding and playback
+        this.#nativeAddon.writeVirtualMic(audioBuffer);
 
         this.#emitStage(this.#currentSequenceId, 'PLAYED');
       }
