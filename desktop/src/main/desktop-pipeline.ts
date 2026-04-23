@@ -663,9 +663,8 @@ export class DesktopPipeline {
         this.#latencyMonitor.markTTSFirstByte(this.#currentSequenceId);
         this.#emitStage(this.#currentSequenceId, 'SYNTHESIZED');
 
-        // Resample 24kHz → 48kHz and write to BlackHole
-        const resampled = this.#nativeAddon.resample(audioBuffer, 24000, 48000);
-        this.#nativeAddon.writeVirtualMic(resampled);
+        // Pass raw 24kHz PCM directly — ffmpeg handles resampling to 48kHz in writeVirtualMic
+        this.#nativeAddon.writeVirtualMic(audioBuffer, 24000);
 
         this.#emitStage(this.#currentSequenceId, 'PLAYED');
       }

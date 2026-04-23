@@ -29,7 +29,7 @@ export interface NativeAudioAddon {
   getDriverVersion(): string | null;
   installDriver(): DriverInstallResult;
   uninstallDriver(): boolean;
-  writeVirtualMic(pcm: Buffer): void;
+  writeVirtualMic(pcm: Buffer, sampleRate?: number): void;
   getDriverStatus(): DriverStatus;
   resample(pcm: Buffer, fromRate: number, toRate: number): Buffer;
 }
@@ -129,16 +129,16 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
   /** Write PCM audio to the virtual mic (BlackHole / PulseAudio sink). */
   #outputChunkCount = 0;
 
-  writeVirtualMic(pcm: Buffer): void {
+  writeVirtualMic(pcm: Buffer, sampleRate = 48000): void {
     this.#outputChunkCount++;
     if (this.#outputChunkCount <= 5 || this.#outputChunkCount % 20 === 0) {
-      console.log(`[Audio] Writing ${pcm.length} bytes to virtual mic (chunk #${this.#outputChunkCount})`);
+      console.log(`[Audio] Writing ${pcm.length} bytes to virtual mic (chunk #${this.#outputChunkCount}, ${sampleRate}Hz)`);
     }
 
     // Write to BlackHole / virtual mic only — meeting app picks it up.
     // Speaker playback is intentionally disabled to prevent double audio:
     // the user hears the translation through the meeting app's audio output.
-    this.#playToBlackHole(pcm);
+    this.#playToBlackHole(pcm, sampleRate);
   }
 
   isDriverInstalled(): boolean { return false; }
@@ -208,7 +208,7 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
   #bhIdx: number | null = null;
 
   /** Play PCM to BlackHole via a short-lived ffmpeg (no persistent pipe = no buffering) */
-  #playToBlackHole(pcm: Buffer): void {
+  #playToBlackHole(pcm: Buffer, sampleRate = 48000): void {
     if (process.platform === 'darwin') {
       if (this.#bhIdx === null) {
         this.#bhIdx = this.#findBlackHoleIndex();
@@ -218,18 +218,42 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
         }
         console.log(`[Audio] Found BlackHole at audiotoolbox device index ${this.#bhIdx}`);
       }
-      // Spawn a short-lived ffmpeg that reads the PCM from stdin and plays to BlackHole
+
+      // Write PCM to a temp WAV file, then play to BlackHole via ffmpeg.
+      // Using a file avoids pipe buffering issues that cause garbled audio.
+      this.#outputChunkCount;
+      const wavPath = join(tmpdir(), `vb-bh-${Date.now()}.wav`);
+      const header = Buffer.alloc(44);
+      const dataSize = pcm.length;
+      const fileSize = 36 + dataSize;
+      const byteRate = sampleRate * 2; // mono 16-bit
+      header.write('RIFF', 0);
+      header.writeUInt32LE(fileSize, 4);
+      header.write('WAVE', 8);
+      header.write('fmt ', 12);
+      header.writeUInt32LE(16, 16);
+      header.writeUInt16LE(1, 20);            // PCM format
+      header.writeUInt16LE(1, 22);            // mono
+      header.writeUInt32LE(sampleRate, 24);   // sample rate
+      header.writeUInt32LE(byteRate, 28);     // byte rate
+      header.writeUInt16LE(2, 32);            // block align
+      header.writeUInt16LE(16, 34);           // bits per sample
+      header.write('data', 36);
+      header.writeUInt32LE(dataSize, 40);
+
+      writeFileSync(wavPath, Buffer.concat([header, pcm]));
+
       const proc = spawn('ffmpeg', [
-        '-y', '-f', 's16le', '-ar', '48000', '-ac', '1', '-i', 'pipe:0',
+        '-y', '-i', wavPath,
         '-f', 'audiotoolbox', '-audio_device_index', String(this.#bhIdx),
-        '',
-      ], { stdio: ['pipe', 'ignore', 'ignore'] });
-      proc.stdin?.on('error', () => {});
-      proc.on('error', () => {});
-      try {
-        proc.stdin?.write(pcm);
-        proc.stdin?.end(); // Signal EOF — ffmpeg will play and exit
-      } catch(_e) {}
+        '-',
+      ], { stdio: ['ignore', 'ignore', 'ignore'] });
+      proc.on('close', () => {
+        try { unlinkSync(wavPath); } catch(_e2) {}
+      });
+      proc.on('error', () => {
+        try { unlinkSync(wavPath); } catch(_e3) {}
+      });
     } else if (process.platform === 'linux') {
       const proc = spawn('ffmpeg', [
         '-f', 's16le', '-ar', '48000', '-ac', '1', '-i', 'pipe:0',
@@ -381,7 +405,7 @@ export class MockNativeAddon implements NativeAudioAddon {
   getDriverVersion(): string | null { return this.#driverInstalled ? '1.0.0' : null; }
   installDriver(): DriverInstallResult { this.#driverInstalled = true; return { success: true }; }
   uninstallDriver(): boolean { this.#driverInstalled = false; return true; }
-  writeVirtualMic(_pcm: Buffer): void {}
+  writeVirtualMic(_pcm: Buffer, _sampleRate?: number): void {}
   getDriverStatus(): DriverStatus {
     return this.#driverInstalled ? { state: 'installed', version: '1.0.0', active: true, sampleRate: 48000 } : { state: 'not-installed' };
   }
