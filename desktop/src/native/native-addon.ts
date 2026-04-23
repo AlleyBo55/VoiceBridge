@@ -240,11 +240,15 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
 
       proc.on('close', (code) => {
         console.log(`[Audio] ffmpeg→BlackHole exited code=${code}`);
-        try { unlinkSync(mp3Path); } catch(_e2) {}
         if (code !== 0) {
           console.error(`[Audio] ffmpeg stderr: ${stderrData.slice(-500)}`);
         }
+        try { unlinkSync(mp3Path); } catch(_e2) {}
       });
+
+      // Also play through default speakers so user can hear the translation locally.
+      // This runs in parallel with the BlackHole output — not sequentially.
+      spawn('afplay', [mp3Path], { stdio: 'ignore' });
       proc.on('error', (err) => {
         console.error(`[Audio] ffmpeg spawn error: ${err.message}`);
         try { unlinkSync(mp3Path); } catch(_e3) {}
