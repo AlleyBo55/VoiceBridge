@@ -51,7 +51,15 @@ jobs:
         working-directory: desktop
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run dist:mac
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          # Build without signing first (electron-builder skips signing when CSC_IDENTITY_AUTO_DISCOVERY=false)
+          npm run dist:mac
+          # The .app bundles and DMGs are already created. 
+          # Ad-hoc sign the apps inside the unpacked dirs for users who copy .app directly.
+          for app in release/mac*/VoiceBridge.app; do
+            codesign --force --deep --sign - "$app" || true
+          done
 
       - name: Rename artifacts
         run: |
