@@ -20,14 +20,21 @@ import { handleInvoke } from './electron-ipc.js';
 // ── State ───────────────────────────────────────────────────
 
 let mainWindow: BrowserWindow | null = null;
-let _tray: Tray | null = null;
+
+/**
+ * References retained to prevent garbage collection.
+ * Tray and AutoStart must stay alive for the app lifetime.
+ */
+const retained: { tray: Tray | null; autoStart: AutoStartManager | null } = {
+  tray: null,
+  autoStart: null,
+};
 
 const nativeAddon = createNativeAddon();
 const debugLog = new DesktopDebugLog();
 const settings = new DesktopSettingsStore();
 let pipeline: DesktopPipeline;
 let driverInstaller: DriverInstaller;
-let _autoStart: AutoStartManager;
 let languageService: LanguageService;
 let panicStop: PanicStop;
 let voiceProfile: DesktopVoiceProfile;
@@ -411,13 +418,13 @@ app.whenReady().then(async () => {
   // Initialize services
   driverInstaller = new DriverInstaller(nativeAddon, settings, debugLog);
   await driverInstaller.initialize();
-  _autoStart = new AutoStartManager();
+  retained.autoStart = new AutoStartManager();
   languageService = new LanguageService(settings);
   voiceProfile = new DesktopVoiceProfile(settings, debugLog);
 
   // Create window and tray
   mainWindow = createMainWindow();
-  _tray = createTray();
+  retained.tray = createTray();
 
   // Initialize pipeline
   pipeline = new DesktopPipeline(nativeAddon, settings, mainWindow, debugLog);
