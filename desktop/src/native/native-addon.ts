@@ -425,6 +425,21 @@ export class MockNativeAddon implements NativeAudioAddon {
 
 /** Create the best available native addon. Uses ffmpeg if available, falls back to mock. */
 export function createNativeAddon(): NativeAudioAddon {
+  // Electron apps launched from Finder/Dock don't inherit shell PATH.
+  // Ensure common install locations are in PATH so ffmpeg/sox/afplay are found.
+  const extraPaths = [
+    '/opt/homebrew/bin',       // macOS ARM Homebrew
+    '/usr/local/bin',          // macOS Intel Homebrew / manual installs
+    '/usr/bin',                // system binaries
+    '/snap/bin',               // Ubuntu snap
+    '/home/linuxbrew/.linuxbrew/bin', // Linux Homebrew
+  ];
+  const currentPath = process.env['PATH'] ?? '';
+  const missingPaths = extraPaths.filter(p => !currentPath.includes(p));
+  if (missingPaths.length > 0) {
+    process.env['PATH'] = [...missingPaths, currentPath].join(':');
+  }
+
   try {
     execSync('which ffmpeg', { encoding: 'utf8', timeout: 2000 });
     console.log('[Audio] Using FfmpegNativeAddon (real mic capture + BlackHole output)');
