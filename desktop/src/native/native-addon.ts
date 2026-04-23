@@ -203,6 +203,8 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
     ];
   }
 
+  // BlackHole device index — retained for future meeting-mode integration
+  // @ts-expect-error Retained for future BlackHole output feature
   #bhIdx: number | null = null;
 
   /** Play PCM to BlackHole via a short-lived ffmpeg (no persistent pipe = no buffering) */
@@ -335,7 +337,9 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
     return '0';
   }
 
-  /** Find BlackHole audiotoolbox device index using ffmpeg device listing. */
+  /** Find BlackHole audiotoolbox device index using ffmpeg device listing.
+   * Retained for future meeting-mode integration. */
+  // @ts-expect-error Retained for future BlackHole output feature
   #findBlackHoleIndex(): number | null {
     try {
       // List audiotoolbox output devices by providing a dummy input
