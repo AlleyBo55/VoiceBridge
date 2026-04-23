@@ -3,14 +3,22 @@
   "version": "1.0.0",
   "type": "module",
   "description": "VoiceBridge Desktop — Real-time voice translation with OS-level virtual microphone",
-  "author": "AlleyBo55",
-  "main": "dist/main/main.js",
+  "homepage": "https://github.com/AlleyBo55/VoiceBridge",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AlleyBo55/VoiceBridge.git"
+  },
+  "author": {
+    "name": "AlleyBo55",
+    "email": "alleybo55@users.noreply.github.com"
+  },
+  "main": "dist/main/main.cjs",
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "build": "npm run typecheck && node scripts/build.mjs && vite build",
     "build:main": "node scripts/build.mjs",
     "build:renderer": "vite build",
-    "start": "electron dist/main/main.js",
+    "start": "electron dist/main/main.cjs",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
     "dist:mac": "electron-builder --mac --publish never",
@@ -28,6 +36,7 @@
       "dist/**/*",
       "!node_modules/**/*"
     ],
+    "publish": null,
     "extraResources": [],
     "mac": {
       "category": "public.app-category.productivity",

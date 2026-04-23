@@ -67,7 +67,7 @@ function createMainWindow(): BrowserWindow {
     // Open DevTools in dev mode
     win.webContents.openDevTools({ mode: 'detach' });
   } else {
-    void win.loadFile(join(__dirname, '..', 'renderer', 'src', 'renderer', 'index.html'));
+    void win.loadFile(join(__dirname, '..', 'renderer', 'index.html'));
   }
 
   // Hide on blur (click outside) — disabled in dev for DevTools usability
