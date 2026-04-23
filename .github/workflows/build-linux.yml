@@ -32,7 +32,7 @@ jobs:
         working-directory: desktop
         run: npm run typecheck
 
-      - name: Build main process
+      - name: Build main + preload
         working-directory: desktop
         run: npm run build:main
 
