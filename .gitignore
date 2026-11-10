@@ -9,3 +9,4 @@ secrets.txt
 # Remotion render output
 reel/out/
 reel/node_modules/
+agensi/dist/
