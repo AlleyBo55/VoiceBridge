@@ -65,31 +65,56 @@ VoiceBridge captures your microphone, transcribes your speech, translates it thr
 | Homebrew | [brew.sh](https://brew.sh) | — | — |
 | PulseAudio/PipeWire | — | Pre-installed on Ubuntu 22.04+ | — |
 | ElevenLabs API key | [elevenlabs.io](https://elevenlabs.io) | [elevenlabs.io](https://elevenlabs.io) | [elevenlabs.io](https://elevenlabs.io) |
-| LLM API key | [openrouter.ai](https://openrouter.ai) / [openai.com](https://platform.openai.com) / [anthropic.com](https://console.anthropic.com) | same | same |
+| LLM API key | [openai.com](https://platform.openai.com) / [anthropic.com](https://console.anthropic.com) / [openrouter.ai](https://openrouter.ai) / [huggingface.co](https://huggingface.co/settings/tokens), or none for a local server (Ollama, LM Studio) | same | same |
 
-ffmpeg is required for real-time mic capture and virtual mic audio output. Without it, VoiceBridge falls back to a silent mock (no audio).
+ffmpeg is required for real-time mic capture. Translated speech streams through sox's `play` (or `ffplay`, which ships with most ffmpeg builds). Without ffmpeg, VoiceBridge falls back to a silent mock (no audio).
 
 ---
 
 ## The Pipeline
 
 ```
-  ┌─────────┐    ┌───────────┐    ┌─────────────┐    ┌───────────┐    ┌──────────────┐
-  │  Your    │───▶│ Transcribe│───▶│  Translate   │───▶│ Your Clone│───▶│  Virtual Mic │
-  │  Voice   │    │  (Scribe) │    │   (LLM)      │    │  Voice    │    │  "VoiceBridge│
-  │  16kHz   │    │  150ms    │    │   300ms      │    │  75ms     │    │   Mic"       │
-  └─────────┘    └───────────┘    └─────────────┘    └───────────┘    └──────────────┘
+  ┌─────────┐    ┌──────────────┐    ┌─────────────┐    ┌──────────────┐    ┌──────────────┐
+  │  Your    │───▶│  Transcribe  │───▶│  Translate   │───▶│  Your Clone  │───▶│  Virtual Mic │
+  │  Voice   │    │ Scribe v3    │    │  any LLM     │    │  Eleven v4   │    │  "VoiceBridge│
+  │  16kHz   │    │ Live         │    │  (streamed)  │    │  Turbo       │    │   Mic"       │
+  └─────────┘    └──────────────┘    └─────────────┘    └──────────────┘    └──────────────┘
 ```
 
-Five stages. Under 1.5 seconds. Works everywhere.
+Translation tokens stream straight into the voice, and the voice streams straight to the speaker, so your clone starts talking while the sentence is still being translated.
 
-| Stage | What Happens | Technology | Latency |
-|-------|-------------|-----------|---------|
-| Capture | Real mic audio captured via ffmpeg | avfoundation (macOS) / pulse (Linux) / dshow (Windows) | 10ms |
-| Transcribe | Speech becomes text in real-time | ElevenLabs Scribe v2 Realtime | 150ms |
-| Translate | Text translated token-by-token | OpenAI / Anthropic / OpenRouter | 300ms |
-| Synthesize | Translated text becomes speech in your voice | ElevenLabs Flash v2.5 TTS | 75ms |
-| Output | Translated audio written to virtual mic | ffmpeg → BlackHole / PulseAudio / VB-CABLE | 10ms |
+| Stage | What Happens | Technology |
+|-------|-------------|-----------|
+| Capture | Real mic audio captured via ffmpeg | avfoundation (macOS) / pulse (Linux) / dshow (Windows) |
+| Transcribe | Speech becomes text; turn prediction commits when you finish the thought, not at the first pause | ElevenLabs Scribe v3 Live, background-audio filtering |
+| Translate | Text translated token by token, with the last 10 utterances and your glossary as context | OpenAI, Anthropic, OpenRouter, Hugging Face, or any OpenAI-compatible server |
+| Synthesize | Translated text becomes speech in your cloned voice | ElevenLabs Eleven v4 Turbo (or Flash v2.5 / Multilingual v2) |
+| Output | Translated audio streamed to the output device / virtual mic | sox `play` or ffplay → BlackHole / PulseAudio / VB-CABLE |
+
+**Delay:** not zero. The model latencies are small (ElevenLabs quotes ~100 ms for Eleven v4 Turbo), but the voice needs about 8 words of translation before it starts, and the network adds round trips. Expect roughly a second after you stop talking; the app shows the measured delay of every utterance.
+
+### Translation engines
+
+The pipeline above is the default **cascade** engine. Settings → Translation engine also offers speech-to-speech models that do all three stages in one hop and translate while you are still talking:
+
+| Engine | Voice the meeting hears | Languages | Audio processed by |
+|--------|------------------------|-----------|--------------------|
+| Cascade (default) | Your ElevenLabs clone | input 90+, output: 90+ with Eleven v4 Turbo | ElevenLabs + your LLM provider |
+| Qwen3.8 LiveTranslate | A clone Qwen makes from your first seconds of speech | understands 60, speaks 29 | Alibaba Cloud (Singapore or Beijing) |
+| OpenAI GPT-Realtime-Translate | OpenAI's voice | 70+ in, 13 out | OpenAI |
+| Gemini 3.5 Live Translate (preview) | Keeps your intonation and pitch, not a clone | 70+ | Google |
+
+### Translation models
+
+The model picker loads each provider's live model list, so new models show up without an app update:
+
+| Provider | Default | Notes |
+|----------|---------|-------|
+| OpenAI | `gpt-6-luna` | sent with `reasoning_effort: none` for speed |
+| Anthropic | `claude-haiku-5-5` | thinking disabled where the model allows it |
+| OpenRouter | `openai/gpt-6-luna` | ~400 models: OpenAI, Anthropic, Google, Qwen, DeepSeek, Meta, Mistral, xAI… |
+| Hugging Face | `Qwen/Qwen3.8-27B:fastest` | open-weights models via Inference Providers, listed fastest first-token first |
+| Custom | — | any OpenAI-compatible base URL: Ollama, LM Studio, vLLM, Groq, Together, DeepSeek… |
 
 ---
 
@@ -212,8 +237,15 @@ Keys are encrypted with AES-GCM-256 and stored only on your device. VoiceBridge 
 
 ## 90+ Languages
 
-**Input**: Every language ElevenLabs Scribe supports. Auto-detect is default.
-**Output**: Every language ElevenLabs TTS supports. Any-to-any. No restrictions.
+**Input**: Every language ElevenLabs Scribe v3 Live supports (90+). Auto-detect is default.
+**Output**: Depends on the voice model: Eleven v4 Turbo speaks 90+, Flash v2.5 32, Multilingual v2 29. The speech-to-speech engines have their own limits (see the engine table).
+
+## What to expect
+
+- **Faithful, not word-for-word.** The translator is told to keep every idea, name and number, never to summarize or answer questions, and it sees your recent sentences and glossary. Names and jargon can still come out wrong, and translation always rephrases.
+- **Sounds like you, not identical.** An instant clone from 30 seconds of speech is close; an ElevenLabs Professional Voice Clone is closer. Accent and emotion can shift between languages.
+- **Your voice only.** Clone the voice of the person using the app, with their consent.
+- **Windows:** translated speech now plays through ffplay (PowerShell as a fallback) to the default output device; route that to CABLE Input to reach meetings. Not yet tested on Windows.
 
 ---
 
@@ -225,9 +257,10 @@ Keys are encrypted with AES-GCM-256 and stored only on your device. VoiceBridge 
 | UI | Preact + CSS Custom Properties | 3KB gzipped, Nothing design system |
 | Audio I/O | ffmpeg | Real mic capture + virtual mic output |
 | Virtual Mic | BlackHole / PulseAudio / VB-CABLE | OS-level virtual audio device |
-| STT | ElevenLabs Scribe v2 Realtime | 150ms latency, 90+ languages |
-| TTS | ElevenLabs Flash v2.5 | 75ms latency, voice cloning |
-| Translation | OpenAI / Anthropic / OpenRouter | Streaming, 200+ models |
+| STT | ElevenLabs Scribe v3 Live | Turn prediction, background-audio filtering, 90+ languages |
+| TTS | ElevenLabs Eleven v4 Turbo | Streams over the Text to Dialogue WebSocket, voice cloning, 90+ languages |
+| Translation | OpenAI / Anthropic / OpenRouter / Hugging Face / OpenAI-compatible | Streaming, live model lists |
+| Speech-to-speech | Qwen3.8 LiveTranslate / GPT-Realtime-Translate / Gemini 3.5 Live Translate | Optional engines |
 | Testing | Vitest + fast-check | Property-based correctness |
 
 ---
@@ -279,6 +312,18 @@ desktop/
 │   └── shared/         # Types, platform utils
 └── tests/properties/   # Property-based tests
 ```
+
+---
+
+## Agent Skill (Agensi)
+
+`agensi/voicebridge-setup/` is a free [Agent Skill](https://agentskills.io/specification) that lets Claude Code, Codex, Cursor or Gemini CLI install, configure and troubleshoot VoiceBridge. It runs a read-only doctor script and asks before every install. It cannot translate meetings itself.
+
+```bash
+node agensi/package-skill.mjs   # validates the skill, writes agensi/dist/voicebridge-setup.zip
+```
+
+Upload the zip at [agensi.io/sell](https://www.agensi.io/sell) with the price set to Free. Listing copy and the review checklist are in `agensi/LISTING.md`.
 
 ---
 

@@ -97,7 +97,34 @@ export interface DegradationTransition {
   timestamp: number;
 }
 
-export type LLMProvider = 'openai' | 'anthropic' | 'openrouter';
+/**
+ * Translation (LLM) providers. 'huggingface' is the Hugging Face Inference Providers router;
+ * 'custom' is any OpenAI-compatible server at `llmBaseUrl` (Ollama, LM Studio, vLLM, Groq, ...).
+ */
+export type LLMProvider = 'openai' | 'anthropic' | 'openrouter' | 'huggingface' | 'custom';
+
+/**
+ * ElevenLabs voice models VoiceBridge can speak with.
+ * eleven_v4_turbo streams over the Text to Dialogue WebSocket; the others use the
+ * Text to Speech HTTP stream endpoint.
+ */
+export type TTSModelId = 'eleven_v4_turbo' | 'eleven_flash_v2_5' | 'eleven_multilingual_v2';
+
+/**
+ * How speech gets translated.
+ * - cascade: ElevenLabs Scribe → LLM → ElevenLabs voice in the user's clone (default)
+ * - qwen-livetranslate: Qwen3.8 LiveTranslate, one speech-to-speech model that clones the voice itself
+ * - openai-realtime-translate: OpenAI GPT-Realtime-Translate, speech-to-speech, OpenAI's voice
+ * - gemini-live-translate: Gemini 3.5 Live Translate (preview), speech-to-speech, keeps intonation
+ */
+export type TranslationEngineId =
+  | 'cascade'
+  | 'qwen-livetranslate'
+  | 'openai-realtime-translate'
+  | 'gemini-live-translate';
+
+/** Alibaba Cloud Model Studio region that hosts the Qwen workspace. */
+export type QwenRegion = 'ap-southeast-1' | 'cn-beijing';
 
 export interface GlossaryEntry {
   source: string;
@@ -255,13 +282,24 @@ export interface DesktopSettingsSchema {
   // Encrypted (AES-GCM-256)
   elevenLabsApiKey: string;
   llmApiKey: string;
+  qwenApiKey: string;
+  /** OpenAI key for GPT-Realtime-Translate; falls back to llmApiKey when the LLM provider is OpenAI. */
+  openaiTranslateApiKey: string;
+  geminiApiKey: string;
 
   // Plaintext JSON
   sourceLanguage: string;
   targetLanguage: string;
   recentLanguages: string[];
   llmProvider: LLMProvider;
+  /** Translation model for the selected llmProvider (any provider; key name kept for compatibility). */
   openRouterModel: string;
+  /** Base URL of the OpenAI-compatible server when llmProvider is 'custom', e.g. http://127.0.0.1:11434/v1 */
+  llmBaseUrl: string;
+  ttsModel: TTSModelId;
+  translationEngine: TranslationEngineId;
+  qwenWorkspaceId: string;
+  qwenRegion: QwenRegion;
   contextWindowSize: number;
   preserveTechnicalTerms: boolean;
   customGlossary: GlossaryEntry[];
@@ -294,17 +332,28 @@ export interface DesktopSettingsSchema {
 export const ENCRYPTED_SETTINGS_KEYS: ReadonlySet<keyof DesktopSettingsSchema> = new Set([
   'elevenLabsApiKey',
   'llmApiKey',
+  'qwenApiKey',
+  'openaiTranslateApiKey',
+  'geminiApiKey',
 ]);
 
 /** Default settings values */
 export const DEFAULT_SETTINGS: DesktopSettingsSchema = {
   elevenLabsApiKey: '',
   llmApiKey: '',
+  qwenApiKey: '',
+  openaiTranslateApiKey: '',
+  geminiApiKey: '',
   sourceLanguage: 'auto',
   targetLanguage: 'es',
   recentLanguages: [],
   llmProvider: 'openai',
-  openRouterModel: 'openai/gpt-4o',
+  openRouterModel: 'gpt-6-luna',
+  llmBaseUrl: '',
+  ttsModel: 'eleven_v4_turbo',
+  translationEngine: 'cascade',
+  qwenWorkspaceId: '',
+  qwenRegion: 'ap-southeast-1',
   contextWindowSize: 10,
   preserveTechnicalTerms: true,
   customGlossary: [],

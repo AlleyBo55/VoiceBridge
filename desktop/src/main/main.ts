@@ -16,6 +16,26 @@ import { LanguageService } from './language-service.js';
 import { PanicStop } from './panic-stop.js';
 import { DesktopVoiceProfile } from './desktop-voice-profile.js';
 import { handleInvoke } from './electron-ipc.js';
+import { listLLMModels, validateLLMKey } from './llm-catalog.js';
+import { validateQwenCredentials } from './qwen-livetranslate-engine.js';
+import { validateOpenAITranslateCredentials } from './openai-translate-engine.js';
+import { validateGeminiCredentials } from './gemini-translate-engine.js';
+import type { LLMProvider } from '../shared/types.js';
+
+const LLM_PROVIDERS: ReadonlySet<string> = new Set<LLMProvider>(['openai', 'anthropic', 'openrouter', 'huggingface', 'custom']);
+
+/** Parse `{ provider, key, baseUrl? }` from the renderer, or null if the provider is unknown. */
+function readLLMParams(params: unknown): { provider: LLMProvider; key: string; baseUrl: string } | null {
+  if (typeof params !== 'object' || params === null) return null;
+  const p = params as Record<string, unknown>;
+  const provider = p['provider'];
+  if (typeof provider !== 'string' || !LLM_PROVIDERS.has(provider)) return null;
+  return {
+    provider: provider as LLMProvider,
+    key: typeof p['key'] === 'string' ? p['key'].trim() : '',
+    baseUrl: typeof p['baseUrl'] === 'string' ? p['baseUrl'] : '',
+  };
+}
 
 // ── State ───────────────────────────────────────────────────
 
@@ -240,63 +260,33 @@ function registerIPCHandlers(): void {
       return { valid: false, error: err instanceof Error ? err.message : 'Connection failed' };
     }
   });
-  ipcMain.handle('validate:llm', async (_event, params: { provider: string; key: string }) => {
-    try {
-      let url: string;
-      const headers: Record<string, string> = {};
-      if (params.provider === 'anthropic') {
-        url = 'https://api.anthropic.com/v1/messages';
-        headers['x-api-key'] = params.key;
-        headers['anthropic-version'] = '2023-06-01';
-      } else if (params.provider === 'openrouter') {
-        url = 'https://openrouter.ai/api/v1/models';
-        headers['Authorization'] = `Bearer ${params.key}`;
-      } else {
-        url = 'https://api.openai.com/v1/models';
-        headers['Authorization'] = `Bearer ${params.key}`;
-      }
-      const res = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
-      if (res.ok) return { valid: true };
-      if (res.status === 401) return { valid: false, error: 'Invalid API key' };
-      return { valid: false, error: `HTTP ${res.status}` };
-    } catch (err) {
-      return { valid: false, error: err instanceof Error ? err.message : 'Connection failed' };
-    }
+  // SECURITY: renderer input is untrusted; only known providers and string fields pass.
+  ipcMain.handle('validate:llm', async (_event, params: unknown) => {
+    const p = readLLMParams(params);
+    if (!p) return { valid: false, error: 'Unknown provider' };
+    return validateLLMKey(p.provider, p.key, p.baseUrl);
   });
-  // Fetch available models for a provider (for model selector)
-  ipcMain.handle('models:list', async (_event, params: { provider: string; key: string }) => {
-    try {
-      let url: string;
-      const headers: Record<string, string> = {};
-      if (params.provider === 'openrouter') {
-        url = 'https://openrouter.ai/api/v1/models';
-        headers['Authorization'] = `Bearer ${params.key}`;
-      } else if (params.provider === 'openai') {
-        url = 'https://api.openai.com/v1/models';
-        headers['Authorization'] = `Bearer ${params.key}`;
-      } else {
-        // Anthropic doesn't have a models list endpoint — return hardcoded
-        return [
-          { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4' },
-          { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku' },
-        ];
+  // Live model list for the model picker
+  ipcMain.handle('models:list', async (_event, params: unknown) => {
+    const p = readLLMParams(params);
+    return p ? listLLMModels(p.provider, p.key, p.baseUrl) : [];
+  });
+  // Speech-to-speech engine credentials (opens one short session, sends no audio)
+  ipcMain.handle('validate:engine', async (_event, params: unknown) => {
+    const p = typeof params === 'object' && params !== null ? params as Record<string, unknown> : {};
+    const str = (k: string): string => (typeof p[k] === 'string' ? (p[k] as string).trim() : '');
+    switch (p['engine']) {
+      case 'qwen-livetranslate': {
+        const region = str('region');
+        if (region !== 'ap-southeast-1' && region !== 'cn-beijing') return { valid: false, error: 'Unknown region' };
+        return validateQwenCredentials({ apiKey: str('apiKey'), workspaceId: str('workspaceId'), region });
       }
-      const res = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
-      if (!res.ok) return [];
-      const data = await res.json() as { data?: Array<{ id: string; name?: string }> };
-      const models = data.data ?? [];
-      // Filter to chat/completion models, return top 30
-      return models
-        .filter((m: { id: string }) => {
-          const id = m.id.toLowerCase();
-          // OpenRouter: show all. OpenAI: filter to gpt models
-          if (params.provider === 'openrouter') return true;
-          return id.includes('gpt') || id.includes('o1') || id.includes('o3');
-        })
-        .slice(0, 30)
-        .map((m: { id: string; name?: string }) => ({ id: m.id, name: m.name ?? m.id }));
-    } catch {
-      return [];
+      case 'openai-realtime-translate':
+        return validateOpenAITranslateCredentials({ apiKey: str('apiKey') });
+      case 'gemini-live-translate':
+        return validateGeminiCredentials({ apiKey: str('apiKey') });
+      default:
+        return { valid: false, error: 'Unknown engine' };
     }
   });
 
