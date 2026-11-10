@@ -15,6 +15,9 @@ import { writeFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import type { AudioDeviceInfo, CaptureConfig, DriverInstallResult, DriverStatus } from '../shared/types.js';
+import { NullPcmOutput, PcmPlayer, type PcmOutputStream } from './pcm-player.js';
+
+export type { PcmOutputStream } from './pcm-player.js';
 
 // ── Interface ───────────────────────────────────────────────
 
@@ -30,6 +33,8 @@ export interface NativeAudioAddon {
   installDriver(): DriverInstallResult;
   uninstallDriver(): boolean;
   writeVirtualMic(audio: Buffer, sampleRate?: number): void;
+  /** Session-long streaming output for translated speech (PCM s16le mono at `sampleRate`). */
+  openPcmOutput(sampleRate: number, log: (level: 'info' | 'warn' | 'error', message: string) => void): PcmOutputStream;
   getDriverStatus(): DriverStatus;
   resample(pcm: Buffer, fromRate: number, toRate: number): Buffer;
 }
@@ -137,6 +142,10 @@ export class FfmpegNativeAddon implements NativeAudioAddon {
 
     // Write MP3 to BlackHole / virtual mic via sox or paplay.
     this.#playToBlackHole(audio);
+  }
+
+  openPcmOutput(sampleRate: number, log: (level: 'info' | 'warn' | 'error', message: string) => void): PcmOutputStream {
+    return new PcmPlayer(sampleRate, log);
   }
 
   isDriverInstalled(): boolean { return false; }
@@ -399,6 +408,9 @@ export class MockNativeAddon implements NativeAudioAddon {
   installDriver(): DriverInstallResult { this.#driverInstalled = true; return { success: true }; }
   uninstallDriver(): boolean { this.#driverInstalled = false; return true; }
   writeVirtualMic(_audio: Buffer, _sampleRate?: number): void {}
+  openPcmOutput(_sampleRate: number, _log: (level: 'info' | 'warn' | 'error', message: string) => void): PcmOutputStream {
+    return new NullPcmOutput();
+  }
   getDriverStatus(): DriverStatus {
     return this.#driverInstalled ? { state: 'installed', version: '1.0.0', active: true, sampleRate: 48000 } : { state: 'not-installed' };
   }

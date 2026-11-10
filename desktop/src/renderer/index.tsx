@@ -8,8 +8,13 @@
  */
 
 import { render } from 'preact';
-import { useState, useEffect, useReducer, useCallback } from 'preact/hooks';
+import { useState, useEffect, useReducer, useCallback, useRef } from 'preact/hooks';
 import type { VoiceBridgeAPI } from '../preload/preload.js';
+import type { LLMProvider, QwenRegion, TranslationEngineId, TTSModelId } from '../shared/types.js';
+import {
+  DEFAULT_LLM_MODELS, LLM_PROVIDER_OPTIONS, TRANSLATION_ENGINE_OPTIONS, TTS_MODEL_OPTIONS,
+  normalizeBaseUrl, resolveLLMModel, type LLMModelOption,
+} from '../shared/llm-models.js';
 
 // ── Global Type Declaration ─────────────────────────────────
 
@@ -24,7 +29,7 @@ const vb = window.voicebridge;
 // ── Language Options (verified against ElevenLabs docs April 2026) ───
 
 /**
- * STT languages — Scribe v2 Realtime supports 90+ languages.
+ * STT languages — Scribe v3 Live supports 90+ languages.
  * Used for "I Speak" selector. Auto-detect is default.
  */
 const STT_LANGUAGES = [
@@ -68,7 +73,7 @@ const STT_LANGUAGES = [
 ];
 
 /**
- * TTS languages — Eleven v3 supports 70+ languages for voice synthesis.
+ * TTS languages — Eleven v4 supports 90+ languages for voice synthesis.
  * Used for "Translate To" selector. Only languages TTS can actually speak.
  * Source: https://elevenlabs.io/docs/developer-guides/models
  */
@@ -262,6 +267,176 @@ function DegradationLabel({ level }: { level: string }) {
   );
 }
 
+// ── Setting Guards & Inline Status ──────────────────────────
+
+function isLLMProvider(value: unknown): value is LLMProvider {
+  return LLM_PROVIDER_OPTIONS.some(o => o.id === value);
+}
+
+/** The LLM provider <option> list, shared by onboarding and Settings. */
+function ProviderOptions() {
+  return <>{LLM_PROVIDER_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}</>;
+}
+
+/** Base URL input for the 'custom' provider; commits on blur so typing doesn't refetch the model list. */
+function BaseUrlField({ value, onInput, onCommit }: { value: string; onInput: (v: string) => void; onCommit: (v: string) => void }) {
+  const invalid = value.trim() !== '' && normalizeBaseUrl(value) === null;
+  return (
+    <div>
+      <label class="label" style={{ display: 'block', marginBottom: 'var(--space-xs)' }}>BASE URL</label>
+      <input class="input-field mono" type="text" placeholder="http://127.0.0.1:11434/v1" value={value} spellcheck={false} autocomplete="off"
+        onInput={(e) => onInput((e.target as HTMLInputElement).value)} onBlur={(e) => onCommit((e.target as HTMLInputElement).value)} />
+      <div class="mono" style={{ fontSize: '10px', color: invalid ? 'var(--accent)' : 'var(--text-disabled)', marginTop: 'var(--space-2xs)' }}>
+        {invalid ? '[ERROR: use https, or http on localhost / a private network]' : 'Ollama :11434/v1 · LM Studio :1234/v1 · vLLM :8000/v1 · or any https OpenAI-compatible API. Key optional for local servers.'}
+      </div>
+    </div>
+  );
+}
+
+function isTTSModelId(value: unknown): value is TTSModelId {
+  return TTS_MODEL_OPTIONS.some(o => o.id === value);
+}
+
+function isTranslationEngineId(value: unknown): value is TranslationEngineId {
+  return TRANSLATION_ENGINE_OPTIONS.some(o => o.id === value);
+}
+
+function isQwenRegion(value: unknown): value is QwenRegion {
+  return value === 'ap-southeast-1' || value === 'cn-beijing';
+}
+
+/** Outcome of a save, shown next to the control that triggered it. */
+type InlineStatus =
+  | { status: 'idle' }
+  | { status: 'saved' }
+  | { status: 'error'; message: string };
+
+/** Renders an InlineStatus as `[SAVED]` / `[ERROR: ...]` text (no toasts). */
+function InlineStatusText({ state }: { state: InlineStatus }) {
+  if (state.status === 'idle') return null;
+  if (state.status === 'saved') {
+    return <div class="mono status-green" style={{ fontSize: 'var(--caption)', marginTop: 'var(--space-2xs)' }}>[SAVED]</div>;
+  }
+  return <div class="mono" style={{ color: 'var(--accent)', fontSize: 'var(--caption)', marginTop: 'var(--space-2xs)' }}>[ERROR: {state.message}]</div>;
+}
+
+// ── Model Picker ────────────────────────────────────────────
+
+/** Where each provider documents the model IDs it accepts. */
+const providerHint = (provider: LLMProvider): string => LLM_PROVIDER_OPTIONS.find(o => o.id === provider)?.hint ?? '';
+
+/** Sentinel option value that reveals the free-text model ID input. */
+const CUSTOM_MODEL_VALUE = '__custom__';
+
+/** Groups models by vendor, keeping the order the provider returned them in. */
+function groupModels(models: readonly LLMModelOption[]): Map<string, LLMModelOption[]> {
+  const groups = new Map<string, LLMModelOption[]>();
+  for (const model of models) {
+    const list = groups.get(model.group);
+    if (list) list.push(model);
+    else groups.set(model.group, [model]);
+  }
+  return groups;
+}
+
+interface ModelPickerProps {
+  provider: LLMProvider;
+  /** Key to list models with. Pass the committed key (loaded or on blur), not every keystroke. */
+  apiKey: string;
+  /** Committed base URL, used by the 'custom' provider only. */
+  baseUrl: string;
+  value: string;
+  onChange: (model: string) => void;
+}
+
+/**
+ * Translation model select backed by the provider's live model list.
+ * The list is fetched on mount, on provider change and when the committed key changes.
+ * If it can't be loaded, the current value and the provider default are still selectable,
+ * and CUSTOM... accepts any typed model ID.
+ */
+function ModelPicker({ provider, apiKey, baseUrl, value, onChange }: ModelPickerProps) {
+  const [loaded, setLoaded] = useState<{ provider: LLMProvider; models: LLMModelOption[] } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [custom, setCustom] = useState(false);
+  const latestRequest = useRef(0);
+  const key = apiKey.trim();
+  // OpenRouter's and Hugging Face's lists are public; a custom server needs its URL; the rest need a key.
+  const canLoad = provider === 'openrouter' || provider === 'huggingface'
+    ? true
+    : provider === 'custom' ? normalizeBaseUrl(baseUrl) !== null : key !== '';
+
+  const loadModels = useCallback(async () => {
+    const requestId = ++latestRequest.current;
+    if (!canLoad) { setLoaded(null); setLoading(false); return; }
+    setLoading(true);
+    let models: LLMModelOption[] = [];
+    try {
+      models = await vb.listModels(provider, key, baseUrl);
+    } catch (err) {
+      console.error('[VB] Model list failed:', err);
+    }
+    // A newer request (provider/key change or refresh) owns the result; drop this one.
+    if (requestId !== latestRequest.current) return;
+    setLoaded({ provider, models });
+    setLoading(false);
+  }, [provider, key, baseUrl, canLoad]);
+
+  useEffect(() => { void loadModels(); }, [loadModels]);
+
+  const models = loaded?.provider === provider ? loaded.models : [];
+  const failed = !loading && loaded?.provider === provider && models.length === 0;
+  const listed = models.some(m => m.id === value);
+  const fallback = [...new Set([value, DEFAULT_LLM_MODELS[provider]])].filter(id => id.trim() !== '');
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-xs)' }}>
+        <label class="label">MODEL</label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
+          {loading && <span class="mono" style={{ color: 'var(--text-disabled)', fontSize: 'var(--caption)' }}>[LOADING...]</span>}
+          <button type="button" class="label" onClick={() => { void loadModels(); }} disabled={!canLoad}
+            style={{ background: 'none', border: 'none', padding: 0, cursor: canLoad ? 'pointer' : 'not-allowed', opacity: canLoad ? 1 : 0.4 }}>
+            REFRESH
+          </button>
+        </div>
+      </div>
+      <select class="input-field" value={custom ? CUSTOM_MODEL_VALUE : value} onChange={(e) => {
+        const next = (e.target as HTMLSelectElement).value;
+        if (next === CUSTOM_MODEL_VALUE) { setCustom(true); return; }
+        setCustom(false);
+        onChange(next);
+      }}>
+        {models.length > 0 ? (
+          <>
+            {!listed && value !== '' && <option value={value}>{value}</option>}
+            {[...groupModels(models)].map(([group, list]) => (
+              <optgroup key={group} label={group}>
+                {list.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+              </optgroup>
+            ))}
+          </>
+        ) : fallback.map(id => <option key={id} value={id}>{id}</option>)}
+        <option value={CUSTOM_MODEL_VALUE}>CUSTOM...</option>
+      </select>
+      {custom && (
+        <input class="input-field mono" type="text" value={value} placeholder={DEFAULT_LLM_MODELS[provider]}
+          onInput={(e) => onChange((e.target as HTMLInputElement).value)}
+          aria-label="Custom model ID" autocomplete="off" spellcheck={false}
+          style={{ marginTop: 'var(--space-xs)' }} />
+      )}
+      {failed && (
+        <div class="mono" style={{ fontSize: '10px', color: 'var(--warning)', marginTop: 'var(--space-2xs)' }}>
+          [COULD NOT LOAD MODELS — CHECK KEY]
+        </div>
+      )}
+      <div class="mono" style={{ fontSize: '10px', color: 'var(--text-disabled)', marginTop: 'var(--space-2xs)' }}>
+        {providerHint(provider)}
+      </div>
+    </div>
+  );
+}
+
 // ── Onboarding View ─────────────────────────────────────────
 
 function OnboardingView({ onComplete }: { onComplete: () => void }) {
@@ -301,8 +476,12 @@ function OnboardingView({ onComplete }: { onComplete: () => void }) {
   // ── Step 1: API Keys ────────────────────────────────────
   const [elevenLabsKey, setElevenLabsKey] = useState('');
   const [llmKey, setLlmKey] = useState('');
-  const [llmProvider, setLlmProvider] = useState('openrouter');
-  const [llmModel, setLlmModel] = useState('openai/gpt-4o');
+  const [llmProvider, setLlmProvider] = useState<LLMProvider>('openrouter');
+  const [llmModel, setLlmModel] = useState(DEFAULT_LLM_MODELS.openrouter);
+  /** LLM key the model list is fetched with; committed on blur so typing doesn't refetch. */
+  const [modelListKey, setModelListKey] = useState('');
+  const [llmBaseUrl, setLlmBaseUrl] = useState('');
+  const [modelListBaseUrl, setModelListBaseUrl] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -317,7 +496,11 @@ function OnboardingView({ onComplete }: { onComplete: () => void }) {
 
   const handleSaveKeys = useCallback(async () => {
     if (!elevenLabsKey.trim()) { setError('ElevenLabs API key is required'); return; }
-    if (!llmKey.trim()) { setError('LLM API key is required'); return; }
+    // Local OpenAI-compatible servers (Ollama, LM Studio) usually need no key.
+    if (llmProvider !== 'custom' && !llmKey.trim()) { setError('LLM API key is required'); return; }
+    const baseUrl = llmProvider === 'custom' ? normalizeBaseUrl(llmBaseUrl) : '';
+    if (baseUrl === null) { setError('Base URL must be https, or http on localhost / a private network'); return; }
+    if (!resolveLLMModel(llmProvider, llmModel)) { setError('Choose a model'); return; }
 
     setSaving(true);
     setError('');
@@ -325,14 +508,15 @@ function OnboardingView({ onComplete }: { onComplete: () => void }) {
       await vb.setSetting('elevenLabsApiKey', elevenLabsKey.trim());
       await vb.setSetting('llmApiKey', llmKey.trim());
       await vb.setSetting('llmProvider', llmProvider);
-      await vb.setSetting('openRouterModel', llmModel);
+      await vb.setSetting('llmBaseUrl', baseUrl);
+      await vb.setSetting('openRouterModel', resolveLLMModel(llmProvider, llmModel));
       setStep('voice');
     } catch {
       setError('Failed to save keys. Please try again.');
     } finally {
       setSaving(false);
     }
-  }, [elevenLabsKey, llmKey, llmProvider]);
+  }, [elevenLabsKey, llmKey, llmProvider, llmModel, llmBaseUrl]);
 
   const handleStartRecording = useCallback(async () => {
     setError('');
@@ -528,25 +712,23 @@ function OnboardingView({ onComplete }: { onComplete: () => void }) {
           </div>
           <div>
             <label class="label" style={{ display: 'block', marginBottom: 'var(--space-xs)' }}>LLM PROVIDER</label>
-            <select class="input-field" value={llmProvider} onChange={(e) => setLlmProvider((e.target as HTMLSelectElement).value)}>
-              <option value="openrouter">OpenRouter</option>
-              <option value="openai">OpenAI</option>
-              <option value="anthropic">Anthropic</option>
+            <select class="input-field" value={llmProvider} onChange={(e) => {
+              const next = (e.target as HTMLSelectElement).value;
+              if (!isLLMProvider(next)) return;
+              setLlmProvider(next);
+              setLlmModel(current => resolveLLMModel(next, current));
+            }}>
+              <ProviderOptions />
             </select>
           </div>
+          {llmProvider === 'custom' && <BaseUrlField value={llmBaseUrl} onInput={setLlmBaseUrl} onCommit={setModelListBaseUrl} />}
           <div>
-            <label class="label" style={{ display: 'block', marginBottom: 'var(--space-xs)' }}>LLM API KEY</label>
-            <input class="input-field" type="password" placeholder="sk-..." value={llmKey}
-              onInput={(e) => setLlmKey((e.target as HTMLInputElement).value)} autocomplete="off" />
+            <label class="label" style={{ display: 'block', marginBottom: 'var(--space-xs)' }}>LLM API KEY{llmProvider === 'custom' ? ' (OPTIONAL)' : ''}</label>
+            <input class="input-field" type="password" placeholder={llmProvider === 'huggingface' ? 'hf_...' : 'sk-...'} value={llmKey}
+              onInput={(e) => setLlmKey((e.target as HTMLInputElement).value)}
+              onBlur={(e) => setModelListKey((e.target as HTMLInputElement).value)} autocomplete="off" />
           </div>
-          <div>
-            <label class="label" style={{ display: 'block', marginBottom: 'var(--space-xs)' }}>MODEL</label>
-            <input class="input-field" type="text" placeholder="openai/gpt-4o" value={llmModel}
-              onInput={(e) => setLlmModel((e.target as HTMLInputElement).value)} />
-            <div class="mono" style={{ fontSize: '10px', color: 'var(--text-disabled)', marginTop: 'var(--space-2xs)' }}>
-              {llmProvider === 'openrouter' ? 'e.g. openai/gpt-4o — browse openrouter.ai/models' : llmProvider === 'openai' ? 'e.g. gpt-4o, gpt-4o-mini' : 'e.g. claude-sonnet-4-20250514'}
-            </div>
-          </div>
+          <ModelPicker provider={llmProvider} apiKey={modelListKey} baseUrl={modelListBaseUrl} value={llmModel} onChange={setLlmModel} />
         </div>
         {error && <div class="mono" style={{ color: 'var(--accent)', fontSize: 'var(--caption)' }}>{error}</div>}
         <div style={{ marginTop: 'auto' }}>
@@ -736,8 +918,28 @@ function EqLegend({ mode }: { mode: 'original' | 'translated' | 'idle' }) {
 function SettingsView({ onBack }: { onBack: () => void }) {
   const [elevenLabsKey, setElevenLabsKey] = useState('');
   const [llmKey, setLlmKey] = useState('');
-  const [llmProvider, setLlmProvider] = useState('openrouter');
-  const [llmModel, setLlmModel] = useState('openai/gpt-4o');
+  const [llmProvider, setLlmProvider] = useState<LLMProvider>('openrouter');
+  const [llmModel, setLlmModel] = useState(DEFAULT_LLM_MODELS.openrouter);
+  /** LLM key the model list is fetched with; set on load and on key blur. */
+  const [modelListKey, setModelListKey] = useState('');
+  const [llmBaseUrl, setLlmBaseUrl] = useState('');
+  const [modelListBaseUrl, setModelListBaseUrl] = useState('');
+  /** Key for the OpenAI / Gemini speech-to-speech engines (Qwen has its own fields below). */
+  const [openaiTranslateKey, setOpenaiTranslateKey] = useState('');
+  const [geminiKey, setGeminiKey] = useState('');
+  const [engineKeyValid, setEngineKeyValid] = useState<boolean | null>(null);
+  const [engineKeyValidating, setEngineKeyValidating] = useState(false);
+  const [engineKeyStatus, setEngineKeyStatus] = useState<InlineStatus>({ status: 'idle' });
+  const [ttsModel, setTtsModel] = useState<TTSModelId>('eleven_v4_turbo');
+  const [ttsModelStatus, setTtsModelStatus] = useState<InlineStatus>({ status: 'idle' });
+  const [engine, setEngine] = useState<TranslationEngineId>('cascade');
+  const [engineStatus, setEngineStatus] = useState<InlineStatus>({ status: 'idle' });
+  const [qwenKey, setQwenKey] = useState('');
+  const [qwenWorkspaceId, setQwenWorkspaceId] = useState('');
+  const [qwenRegion, setQwenRegion] = useState<QwenRegion>('ap-southeast-1');
+  const [qwenValid, setQwenValid] = useState<boolean | null>(null);
+  const [qwenValidating, setQwenValidating] = useState(false);
+  const [qwenStatus, setQwenStatus] = useState<InlineStatus>({ status: 'idle' });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
@@ -769,10 +971,14 @@ function SettingsView({ onBack }: { onBack: () => void }) {
   useEffect(() => { (async () => {
     const el = await vb.getSetting('elevenLabsApiKey') as string;
     const llm = await vb.getSetting('llmApiKey') as string;
-    const prov = await vb.getSetting('llmProvider') as string;
-    const model = await vb.getSetting('openRouterModel') as string;
-    if (el) setElevenLabsKey(el); if (llm) setLlmKey(llm); if (prov) setLlmProvider(prov);
-    if (model) setLlmModel(model);
+    const prov = await vb.getSetting('llmProvider');
+    const model = await vb.getSetting('openRouterModel');
+    const provider = isLLMProvider(prov) ? prov : 'openrouter';
+    if (el) setElevenLabsKey(el); if (llm) { setLlmKey(llm); setModelListKey(llm); }
+    setLlmProvider(provider);
+    setLlmModel(resolveLLMModel(provider, typeof model === 'string' ? model : null));
+    const baseUrl = await vb.getSetting('llmBaseUrl');
+    if (typeof baseUrl === 'string') { setLlmBaseUrl(baseUrl); setModelListBaseUrl(baseUrl); }
     const sl = await vb.getSetting('sourceLanguage') as string;
     const tl = await vb.getSetting('targetLanguage') as string;
     if (sl) setSourceLang(sl);
@@ -799,21 +1005,119 @@ function SettingsView({ onBack }: { onBack: () => void }) {
     await refreshVoices();
   })(); }, [refreshVoices]);
 
+  // Voice model + translation engine settings
+  useEffect(() => {
+    void (async () => {
+      try {
+        const [tts, eng, qKey, qWorkspace, qRegion, oKey, gKey] = await Promise.all([
+          vb.getSetting('ttsModel'),
+          vb.getSetting('translationEngine'),
+          vb.getSetting('qwenApiKey'),
+          vb.getSetting('qwenWorkspaceId'),
+          vb.getSetting('qwenRegion'),
+          vb.getSetting('openaiTranslateApiKey'),
+          vb.getSetting('geminiApiKey'),
+        ]);
+        if (isTTSModelId(tts)) setTtsModel(tts);
+        if (isTranslationEngineId(eng)) setEngine(eng);
+        if (typeof qKey === 'string') setQwenKey(qKey);
+        if (typeof qWorkspace === 'string') setQwenWorkspaceId(qWorkspace);
+        if (isQwenRegion(qRegion)) setQwenRegion(qRegion);
+        if (typeof oKey === 'string') setOpenaiTranslateKey(oKey);
+        if (typeof gKey === 'string') setGeminiKey(gKey);
+      } catch (err) {
+        console.error('[VB] Engine settings load failed:', err);
+        setEngineStatus({ status: 'error', message: err instanceof Error ? err.message : 'Could not load settings' });
+      }
+    })();
+  }, []);
+
+  const handleTtsModelChange = useCallback(async (id: TTSModelId) => {
+    setTtsModel(id);
+    setTtsModelStatus({ status: 'idle' });
+    try {
+      await vb.setSetting('ttsModel', id);
+    } catch (err) {
+      setTtsModelStatus({ status: 'error', message: err instanceof Error ? err.message : 'Save failed' });
+    }
+  }, []);
+
+  const handleEngineChange = useCallback(async (id: TranslationEngineId) => {
+    setEngine(id);
+    setEngineStatus({ status: 'idle' });
+    try {
+      await vb.setSetting('translationEngine', id);
+    } catch (err) {
+      setEngineStatus({ status: 'error', message: err instanceof Error ? err.message : 'Save failed' });
+    }
+  }, []);
+
+  const handleValidateQwen = useCallback(async () => {
+    const apiKey = qwenKey.trim();
+    const workspaceId = qwenWorkspaceId.trim();
+    if (!apiKey) { setQwenStatus({ status: 'error', message: 'Qwen API key is required' }); return; }
+    setQwenValidating(true); setQwenValid(null); setQwenStatus({ status: 'idle' });
+    try {
+      const result = await vb.validateQwenKey({ apiKey, workspaceId, region: qwenRegion });
+      setQwenValid(result.valid);
+      if (!result.valid) { setQwenStatus({ status: 'error', message: result.error ?? 'Invalid key' }); return; }
+      await vb.setSetting('qwenApiKey', apiKey);
+      await vb.setSetting('qwenWorkspaceId', workspaceId);
+      await vb.setSetting('qwenRegion', qwenRegion);
+      setQwenStatus({ status: 'saved' });
+    } catch (err) {
+      setQwenStatus({ status: 'error', message: err instanceof Error ? err.message : 'Validation failed' });
+    } finally {
+      setQwenValidating(false);
+    }
+  }, [qwenKey, qwenWorkspaceId, qwenRegion]);
+
   const handleValidateAndSave = useCallback(async () => {
     if (!elevenLabsKey.trim()) { setError('ElevenLabs API key is required'); return; }
-    if (!llmKey.trim()) { setError('LLM API key is required'); return; }
+    if (llmProvider !== 'custom' && !llmKey.trim()) { setError('LLM API key is required'); return; }
+    const baseUrl = llmProvider === 'custom' ? normalizeBaseUrl(llmBaseUrl) : '';
+    if (baseUrl === null) { setError('Base URL must be https, or http on localhost / a private network'); return; }
+    if (!resolveLLMModel(llmProvider, llmModel)) { setError('Choose a model'); return; }
     setSaving(true); setError(''); setSaved(false); setElValid(null); setLlmValid(null);
     setElValidating(true);
     const elR = await vb.validateElevenLabsKey(elevenLabsKey.trim());
     setElValidating(false); setElValid(elR.valid);
     if (!elR.valid) { setError('ElevenLabs: ' + (elR.error ?? 'Invalid')); setSaving(false); return; }
     setLlmValidating(true);
-    const llmR = await vb.validateLLMKey(llmProvider, llmKey.trim());
+    const llmR = await vb.validateLLMKey(llmProvider, llmKey.trim(), baseUrl);
     setLlmValidating(false); setLlmValid(llmR.valid);
     if (!llmR.valid) { setError('LLM: ' + (llmR.error ?? 'Invalid')); setSaving(false); return; }
-    try { await vb.setSetting('elevenLabsApiKey', elevenLabsKey.trim()); await vb.setSetting('llmApiKey', llmKey.trim()); await vb.setSetting('llmProvider', llmProvider); await vb.setSetting('openRouterModel', llmModel); setSaved(true); setTimeout(() => setSaved(false), 3000); await refreshVoices(); } catch { setError('Failed to save.'); }
+    try {
+      await vb.setSetting('elevenLabsApiKey', elevenLabsKey.trim());
+      await vb.setSetting('llmApiKey', llmKey.trim());
+      await vb.setSetting('llmProvider', llmProvider);
+      await vb.setSetting('llmBaseUrl', baseUrl);
+      await vb.setSetting('openRouterModel', resolveLLMModel(llmProvider, llmModel));
+      setSaved(true); setTimeout(() => setSaved(false), 3000); await refreshVoices();
+    } catch { setError('Failed to save.'); }
     finally { setSaving(false); }
-  }, [elevenLabsKey, llmKey, llmProvider, refreshVoices]);
+  }, [elevenLabsKey, llmKey, llmProvider, llmModel, llmBaseUrl, refreshVoices]);
+
+  /** OpenAI / Gemini engine key: one short session proves it, then it's saved encrypted. */
+  const handleValidateEngineKey = useCallback(async () => {
+    if (engine !== 'openai-realtime-translate' && engine !== 'gemini-live-translate') return;
+    const entered = (engine === 'openai-realtime-translate' ? openaiTranslateKey : geminiKey).trim();
+    // GPT-Realtime-Translate can reuse the OpenAI LLM key.
+    const apiKey = entered || (engine === 'openai-realtime-translate' && llmProvider === 'openai' ? llmKey.trim() : '');
+    if (!apiKey) { setEngineKeyStatus({ status: 'error', message: 'API key is required' }); return; }
+    setEngineKeyValidating(true); setEngineKeyValid(null); setEngineKeyStatus({ status: 'idle' });
+    try {
+      const result = await vb.validateEngineKey(engine, { apiKey });
+      setEngineKeyValid(result.valid);
+      if (!result.valid) { setEngineKeyStatus({ status: 'error', message: result.error ?? 'Invalid key' }); return; }
+      await vb.setSetting(engine === 'openai-realtime-translate' ? 'openaiTranslateApiKey' : 'geminiApiKey', entered);
+      setEngineKeyStatus({ status: 'saved' });
+    } catch (err) {
+      setEngineKeyStatus({ status: 'error', message: err instanceof Error ? err.message : 'Validation failed' });
+    } finally {
+      setEngineKeyValidating(false);
+    }
+  }, [engine, openaiTranslateKey, geminiKey, llmProvider, llmKey]);
 
   const handleSelectVoice = useCallback(async (vid: string) => { await vb.setActiveVoice(vid); setActiveVoiceId(vid); }, []);
   const handleDeleteVoice = useCallback(async (vid: string) => { try { await vb.deleteVoice(vid); await refreshVoices(); } catch { setError('Delete failed.'); } }, [refreshVoices]);
@@ -875,6 +1179,11 @@ function SettingsView({ onBack }: { onBack: () => void }) {
       {/* API Keys */}
       <div class="card" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
         <div class="label">API KEYS</div>
+        {engine !== 'cascade' && (
+          <div class="mono" style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>
+            LLM provider, key and model are unused with a speech-to-speech engine.
+          </div>
+        )}
         <div class="mono" style={{ fontSize: '10px', color: 'var(--text-disabled)', lineHeight: 1.5 }}>
           Encrypted (AES-256) and stored only on this device. VoiceBridge has no server — we never see, collect, or store your keys.
         </div>
@@ -886,76 +1195,98 @@ function SettingsView({ onBack }: { onBack: () => void }) {
         </div>
         <div>
           <label class="label" style={{ display: 'block', marginBottom: 'var(--space-xs)' }}>LLM PROVIDER</label>
-          <select class="input-field" value={llmProvider} onChange={(e) => { const p = (e.target as HTMLSelectElement).value; setLlmProvider(p); setLlmValid(null); }}>
-            <option value="openrouter">OpenRouter</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option>
+          <select class="input-field" value={llmProvider} onChange={(e) => { const p = (e.target as HTMLSelectElement).value; if (!isLLMProvider(p)) return; setLlmProvider(p); setLlmModel(m => resolveLLMModel(p, m)); setLlmValid(null); }}>
+            <ProviderOptions />
           </select>
         </div>
+        {llmProvider === 'custom' && <BaseUrlField value={llmBaseUrl} onInput={(v) => { setLlmBaseUrl(v); setLlmValid(null); }} onCommit={setModelListBaseUrl} />}
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-xs)' }}>
-            <label class="label">LLM API KEY</label>{vIcon(llmValid, llmValidating)}
+            <label class="label">LLM API KEY{llmProvider === 'custom' ? ' (OPTIONAL)' : ''}</label>{vIcon(llmValid, llmValidating)}
           </div>
-          <input class="input-field" type="password" value={llmKey} onInput={(e) => { setLlmKey((e.target as HTMLInputElement).value); setLlmValid(null); }} autocomplete="off" />
+          <input class="input-field" type="password" value={llmKey} onInput={(e) => { setLlmKey((e.target as HTMLInputElement).value); setLlmValid(null); }}
+            onBlur={(e) => setModelListKey((e.target as HTMLInputElement).value)} autocomplete="off" />
         </div>
-        <div>
-          <label class="label" style={{ display: 'block', marginBottom: 'var(--space-xs)' }}>MODEL</label>
-          <select class="input-field" value={llmModel} onChange={(e) => setLlmModel((e.target as HTMLSelectElement).value)}>
-            {llmProvider === 'openrouter' && <>
-              <optgroup label="OpenAI">
-                <option value="openai/gpt-5.4">GPT-5.4</option>
-                <option value="openai/gpt-5.4-mini">GPT-5.4 Mini</option>
-                <option value="openai/gpt-4o">GPT-4o</option>
-                <option value="openai/gpt-4o-mini">GPT-4o Mini</option>
-                <option value="openai/o3-pro">o3 Pro</option>
-                <option value="openai/o3-mini">o3 Mini</option>
-              </optgroup>
-              <optgroup label="Anthropic">
-                <option value="anthropic/claude-opus-4.6">Claude Opus 4.6</option>
-                <option value="anthropic/claude-sonnet-4">Claude Sonnet 4</option>
-                <option value="anthropic/claude-3.5-haiku">Claude 3.5 Haiku</option>
-              </optgroup>
-              <optgroup label="Google">
-                <option value="google/gemini-3.1-pro">Gemini 3.1 Pro</option>
-                <option value="google/gemini-3.1-flash-lite">Gemini 3.1 Flash Lite</option>
-                <option value="google/gemini-2.5-flash">Gemini 2.5 Flash</option>
-                <option value="google/gemini-2.5-pro">Gemini 2.5 Pro</option>
-              </optgroup>
-              <optgroup label="DeepSeek">
-                <option value="deepseek/deepseek-chat-v3-0324">DeepSeek V3</option>
-                <option value="deepseek/deepseek-r1">DeepSeek R1</option>
-              </optgroup>
-              <optgroup label="Kimi (Moonshot)">
-                <option value="moonshotai/kimi-k2">Kimi K2</option>
-              </optgroup>
-              <optgroup label="GLM (Zhipu)">
-                <option value="zhipu/glm-4-plus">GLM-4 Plus</option>
-              </optgroup>
-              <optgroup label="xAI">
-                <option value="x-ai/grok-4">Grok 4</option>
-                <option value="x-ai/grok-3-mini">Grok 3 Mini</option>
-              </optgroup>
-              <optgroup label="Qwen (Alibaba)">
-                <option value="qwen/qwen3-235b-a22b">Qwen 3 235B</option>
-                <option value="qwen/qwen3-30b-a3b">Qwen 3 30B</option>
-              </optgroup>
-            </>}
-            {llmProvider === 'openai' && <>
-              <option value="gpt-5.4">GPT-5.4</option>
-              <option value="gpt-5.4-mini">GPT-5.4 Mini</option>
-              <option value="gpt-4o">GPT-4o</option>
-              <option value="gpt-4o-mini">GPT-4o Mini</option>
-              <option value="o3-pro">o3 Pro</option>
-              <option value="o3-mini">o3 Mini</option>
-            </>}
-            {llmProvider === 'anthropic' && <>
-              <option value="claude-opus-4-20260301">Claude Opus 4.6</option>
-              <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
-              <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku</option>
-            </>}
-          </select>
-        </div>
+        <ModelPicker provider={llmProvider} apiKey={modelListKey} baseUrl={modelListBaseUrl} value={llmModel} onChange={setLlmModel} />
         <button class="btn-primary" onClick={handleValidateAndSave} disabled={saving} style={{ width: '100%' }}>
           {saving ? 'VALIDATING...' : saved ? 'SAVED ✓ KEYS VALID' : 'VALIDATE & SAVE'}
         </button>
+      </div>
+
+      {/* Translation Engine */}
+      <div class="card" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+        <div class="label">TRANSLATION ENGINE</div>
+        <div>
+          <select class="input-field" value={engine} onChange={(e) => {
+            const id = (e.target as HTMLSelectElement).value;
+            if (isTranslationEngineId(id)) void handleEngineChange(id);
+          }}>
+            {TRANSLATION_ENGINE_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+          </select>
+          <InlineStatusText state={engineStatus} />
+        </div>
+        {(() => {
+          const option = TRANSLATION_ENGINE_OPTIONS.find(o => o.id === engine);
+          return option && (
+            <div class="mono" style={{ fontSize: '10px', color: 'var(--text-disabled)', lineHeight: 1.5 }}>
+              VOICE: {option.voice.toUpperCase()}. {option.note}
+            </div>
+          );
+        })()}
+        {(engine === 'openai-realtime-translate' || engine === 'gemini-live-translate') && (
+          <>
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-xs)' }}>
+                <label class="label">{engine === 'openai-realtime-translate' ? 'OPENAI API KEY' : 'GEMINI API KEY'}</label>{vIcon(engineKeyValid, engineKeyValidating)}
+              </div>
+              <input class="input-field" type="password" autocomplete="off"
+                placeholder={engine === 'openai-realtime-translate' && llmProvider === 'openai' ? 'Empty = use the OpenAI LLM key above' : ''}
+                value={engine === 'openai-realtime-translate' ? openaiTranslateKey : geminiKey}
+                onInput={(e) => {
+                  const v = (e.target as HTMLInputElement).value;
+                  if (engine === 'openai-realtime-translate') setOpenaiTranslateKey(v); else setGeminiKey(v);
+                  setEngineKeyValid(null); setEngineKeyStatus({ status: 'idle' });
+                }} />
+            </div>
+            <div>
+              <button class="btn-primary" onClick={() => { void handleValidateEngineKey(); }} disabled={engineKeyValidating} style={{ width: '100%' }}>
+                {engineKeyValidating ? 'VALIDATING...' : 'VALIDATE & SAVE'}
+              </button>
+              <InlineStatusText state={engineKeyStatus} />
+            </div>
+          </>
+        )}
+        {engine === 'qwen-livetranslate' && (
+          <>
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-xs)' }}>
+                <label class="label">QWEN API KEY</label>{vIcon(qwenValid, qwenValidating)}
+              </div>
+              <input class="input-field" type="password" value={qwenKey} onInput={(e) => { setQwenKey((e.target as HTMLInputElement).value); setQwenValid(null); setQwenStatus({ status: 'idle' }); }} autocomplete="off" />
+            </div>
+            <div>
+              <label class="label" style={{ display: 'block', marginBottom: 'var(--space-xs)' }}>WORKSPACE ID</label>
+              <input class="input-field mono" type="text" value={qwenWorkspaceId} onInput={(e) => { setQwenWorkspaceId((e.target as HTMLInputElement).value); setQwenValid(null); setQwenStatus({ status: 'idle' }); }} autocomplete="off" spellcheck={false} />
+            </div>
+            <div>
+              <label class="label" style={{ display: 'block', marginBottom: 'var(--space-xs)' }}>REGION</label>
+              <select class="input-field" value={qwenRegion} onChange={(e) => {
+                const r = (e.target as HTMLSelectElement).value;
+                if (!isQwenRegion(r)) return;
+                setQwenRegion(r); setQwenValid(null); setQwenStatus({ status: 'idle' });
+              }}>
+                <option value="ap-southeast-1">Singapore (ap-southeast-1)</option>
+                <option value="cn-beijing">Beijing (cn-beijing)</option>
+              </select>
+            </div>
+            <div>
+              <button class="btn-primary" onClick={() => { void handleValidateQwen(); }} disabled={qwenValidating} style={{ width: '100%' }}>
+                {qwenValidating ? 'VALIDATING...' : 'VALIDATE & SAVE'}
+              </button>
+              <InlineStatusText state={qwenStatus} />
+            </div>
+          </>
+        )}
       </div>
 
       {/* Languages */}
@@ -985,6 +1316,26 @@ function SettingsView({ onBack }: { onBack: () => void }) {
             </select>
           </div>
         </div>
+      </div>
+
+      {/* Voice Model */}
+      <div class="card" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+        <div class="label">VOICE MODEL</div>
+        {engine !== 'cascade' && (
+          <div class="mono" style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>
+            Unused with a speech-to-speech engine — the engine speaks itself.
+          </div>
+        )}
+        <select class="input-field" value={ttsModel} onChange={(e) => {
+          const id = (e.target as HTMLSelectElement).value;
+          if (isTTSModelId(id)) void handleTtsModelChange(id);
+        }}>
+          {TTS_MODEL_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+        </select>
+        <div class="mono" style={{ fontSize: '10px', color: 'var(--text-disabled)' }}>
+          {TTS_MODEL_OPTIONS.find(o => o.id === ttsModel)?.note ?? ''}
+        </div>
+        <InlineStatusText state={ttsModelStatus} />
       </div>
 
       {/* Microphone */}

@@ -7,8 +7,9 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AudioDeviceInfo, DriverStatus, DriverInstallResult,
-  Language, DebugLogEntry,
+  Language, DebugLogEntry, QwenRegion, TranslationEngineId,
 } from '../shared/types.js';
+import type { LLMModelOption } from '../shared/llm-models.js';
 
 /** VoiceBridge API exposed to the renderer via contextBridge */
 const api = {
@@ -54,10 +55,18 @@ const api = {
   // ── Key Validation ──────────────────────────────────────
   validateElevenLabsKey: (key: string): Promise<{ valid: boolean; error?: string }> =>
     ipcRenderer.invoke('validate:elevenlabs', { key }),
-  validateLLMKey: (provider: string, key: string): Promise<{ valid: boolean; error?: string }> =>
-    ipcRenderer.invoke('validate:llm', { provider, key }),
-  listModels: (provider: string, key: string): Promise<Array<{ id: string; name: string }>> =>
-    ipcRenderer.invoke('models:list', { provider, key }),
+  /** `baseUrl` is only used by the 'custom' (OpenAI-compatible) provider. */
+  validateLLMKey: (provider: string, key: string, baseUrl = ''): Promise<{ valid: boolean; error?: string }> =>
+    ipcRenderer.invoke('validate:llm', { provider, key, baseUrl }),
+  /** Live model list for the provider, grouped by vendor. Empty on failure. */
+  listModels: (provider: string, key: string, baseUrl = ''): Promise<LLMModelOption[]> =>
+    ipcRenderer.invoke('models:list', { provider, key, baseUrl }),
+  /** Checks a speech-to-speech engine key by opening one short session (no audio is sent). */
+  validateEngineKey: (engine: Exclude<TranslationEngineId, 'cascade'>, params: { apiKey: string; workspaceId?: string; region?: QwenRegion }): Promise<{ valid: boolean; error?: string }> =>
+    ipcRenderer.invoke('validate:engine', { engine, ...params }),
+  /** Checks a Qwen (Alibaba Cloud Model Studio) key by opening a LiveTranslate session. */
+  validateQwenKey: (params: { apiKey: string; workspaceId: string; region: QwenRegion }): Promise<{ valid: boolean; error?: string }> =>
+    ipcRenderer.invoke('validate:engine', { engine: 'qwen-livetranslate', ...params }),
 
   // ── Voice Profile ───────────────────────────────────────
   startRecording: (): Promise<void> =>

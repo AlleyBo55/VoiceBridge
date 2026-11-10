@@ -165,9 +165,8 @@ export class DesktopSettingsStore {
       throw new Error('Settings must be a JSON object');
     }
 
-    // Remove sensitive keys if present
-    delete parsed['elevenLabsApiKey'];
-    delete parsed['llmApiKey'];
+    // SECURITY: an imported file must never set API keys, including keys added later.
+    for (const key of ENCRYPTED_SETTINGS_KEYS) delete parsed[key];
 
     // Validate types against defaults
     for (const [key, value] of Object.entries(parsed)) {

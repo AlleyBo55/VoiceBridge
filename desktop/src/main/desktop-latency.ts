@@ -88,12 +88,14 @@ export class DesktopLatencyMonitor {
     this.#mainWindow = window;
   }
 
-  markCaptureStart(sequenceId: number): void {
-    this.#getOrCreate(sequenceId).captureStart = Date.now();
+  /** `at`: when the speech actually started (it's only known to belong to an utterance later). */
+  markCaptureStart(sequenceId: number, at: number = Date.now()): void {
+    this.#getOrCreate(sequenceId).captureStart = at;
   }
 
-  markCaptureEnd(sequenceId: number): void {
-    this.#getOrCreate(sequenceId).captureEnd = Date.now();
+  /** `at`: when the speaker stopped (push-to-talk release or end of speech). */
+  markCaptureEnd(sequenceId: number, at: number = Date.now()): void {
+    this.#getOrCreate(sequenceId).captureEnd = at;
   }
 
   markSTTEnd(sequenceId: number): void {
